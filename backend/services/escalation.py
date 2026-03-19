@@ -71,6 +71,7 @@ def check_escalations(request, validation_issues, policy_eval, eligible_supplier
             ),
             "escalate_to": "Requester Clarification",
             "blocking": True,
+            "source": "deterministic",
         })
 
     # Also trigger ER-001 for budget_insufficient (requester must clarify budget/quantity)
@@ -83,6 +84,7 @@ def check_escalations(request, validation_issues, policy_eval, eligible_supplier
             "trigger": budget_issues[0].get("description", "Budget is insufficient to fulfil the stated quantity."),
             "escalate_to": "Requester Clarification",
             "blocking": True,
+            "source": "deterministic",
         })
 
     # --- ER-001b: Policy conflict (requester instruction conflicts with threshold) ---
@@ -108,6 +110,7 @@ def check_escalations(request, validation_issues, policy_eval, eligible_supplier
             ),
             "escalate_to": approval_threshold_data.get("deviation_approval", ["Procurement Manager"])[0] if approval_threshold_data.get("deviation_approval") else "Procurement Manager",
             "blocking": True,
+            "source": "deterministic",
         })
 
     # --- ER-002: Preferred supplier is restricted ---
@@ -129,6 +132,7 @@ def check_escalations(request, validation_issues, policy_eval, eligible_supplier
                 ),
                 "escalate_to": "Procurement Manager",
                 "blocking": True,
+                "source": "deterministic",
             })
 
     # --- ER-003: Value exceeds high threshold (>=500K EUR/CHF or >=540K USD) ---
@@ -147,6 +151,7 @@ def check_escalations(request, validation_issues, policy_eval, eligible_supplier
                 ),
                 "escalate_to": "Head of Strategic Sourcing",
                 "blocking": False,
+                "source": "deterministic",
             })
 
     # --- ER-004: No compliant supplier found OR lead time infeasible for all ---
@@ -197,6 +202,7 @@ def check_escalations(request, validation_issues, policy_eval, eligible_supplier
             "trigger": " ".join(trigger_parts),
             "escalate_to": "Head of Category",
             "blocking": True,
+            "source": "deterministic",
         })
 
     # --- ER-005: Data residency required but no supplier supports it ---
@@ -218,6 +224,7 @@ def check_escalations(request, validation_issues, policy_eval, eligible_supplier
                 ),
                 "escalate_to": "Security and Compliance Review",
                 "blocking": True,
+                "source": "deterministic",
             })
 
     # --- ER-006: Quantity exceeds all eligible suppliers' capacity_per_month ---
@@ -240,6 +247,7 @@ def check_escalations(request, validation_issues, policy_eval, eligible_supplier
                 ),
                 "escalate_to": "Sourcing Excellence Lead",
                 "blocking": False,
+                "source": "deterministic",
             })
 
     # --- ER-007: Category is Marketing / Influencer Campaign Management ---
@@ -256,6 +264,7 @@ def check_escalations(request, validation_issues, policy_eval, eligible_supplier
             ),
             "escalate_to": "Marketing Governance Lead",
             "blocking": False,
+            "source": "deterministic",
         })
 
     # --- ER-008: USD currency request where supplier doesn't cover delivery country ---
@@ -280,6 +289,16 @@ def check_escalations(request, validation_issues, policy_eval, eligible_supplier
                         ),
                         "escalate_to": "Regional Compliance Lead",
                         "blocking": False,
+                        "source": "deterministic",
                     })
+
+    # --- ER-009: Bundle capacity exceeded (triggered by bundling module) ---
+    # This is a placeholder — the actual trigger comes from the bundling module
+    # which injects this escalation when bundled demand exceeds all suppliers' capacity.
+    # See bundling_module.py for the trigger logic.
+
+    # --- ER-010: Critic high-severity finding ---
+    # This is injected by the supervisor after the critic runs.
+    # Not checked here because critic hasn't run yet at escalation time.
 
     return escalations

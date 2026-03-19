@@ -1,6 +1,8 @@
 """
 Pipeline orchestration for procurement sourcing agent.
 Main entry point that coordinates all analysis steps.
+
+Now delegates to the universal orchestration supervisor for the core pipeline.
 """
 
 from __future__ import annotations
@@ -12,141 +14,13 @@ from typing import Any
 
 from backend.data_loader import get_data
 from backend.services.extractor import extract_requirements
-from backend.services.explainer import generate_explanation
-from backend.services.rule_engine import validate_request, evaluate_policies
-from backend.services.supplier_filter import filter_suppliers, get_pricing_for_supplier
-from backend.services.escalation import check_escalations
 
 logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
-# Lazy imports for modules that may not exist yet
-# ---------------------------------------------------------------------------
-
-def _import_orchestrator():
-    """Import orchestrator module, returning (run_agents, merge_results) or stubs."""
-    try:
-        from backend.services.orchestrator import run_agents, merge_results
-        return run_agents, merge_results
-    except Exception as e:
-        logger.warning("orchestrator module not available (%s); using stubs", e)
-
-        async def run_agents_stub(*args, **kwargs) -> list:
-            return []
-
-        def merge_results_stub(*args, **kwargs):
-            return [], None
-
-        return run_agents_stub, merge_results_stub
-
-
-def _import_confidence():
-    """Import confidence module, returning compute_confidence or a stub."""
-    try:
-        from backend.services.confidence import compute_confidence
-        return compute_confidence
-    except Exception as e:
-        logger.warning("confidence module not available (%s); using stub", e)
-
-        def compute_confidence_stub(*args, **kwargs) -> dict:
-            return {
-                "overall_score": 0.5,
-                "per_supplier": [],
-                "explanation": "Confidence module not available.",
-                "factors": [],
-            }
-
-        return compute_confidence_stub
-
-
-# ---------------------------------------------------------------------------
-# Default ranking when orchestrator is unavailable
-# ---------------------------------------------------------------------------
-
-def _default_rank_suppliers(
-    eligible_suppliers: list[dict[str, Any]],
-    pricing_info: list[dict[str, Any]],
-) -> list[dict[str, Any]]:
-    """
-    Simple ranking by total price (cheapest first) when orchestrator/agents
-    are not available.
-    """
-    # Build a price map: supplier_id -> pricing dict
-    price_map: dict[str, dict] = {}
-    for p in pricing_info:
-        if p is not None:
-            price_map[p["supplier_id"]] = p
-
-    # Score each supplier
-    scored: list[tuple[float, dict, dict | None]] = []
-    for sup in eligible_suppliers:
-        sid = sup["supplier_id"]
-        pricing = price_map.get(sid)
-        total = pricing["total"] if pricing else float("inf")
-        scored.append((total, sup, pricing))
-
-    scored.sort(key=lambda x: x[0])
-
-    ranked = []
-    for rank, (total, sup, pricing) in enumerate(scored, start=1):
-        item: dict[str, Any] = {
-            "rank": rank,
-            "supplier_id": sup["supplier_id"],
-            "supplier_name": sup.get("supplier_name", ""),
-            "preferred": sup.get("preferred_supplier", False),
-            "incumbent": False,
-            "quality_score": sup.get("quality_score"),
-            "risk_score": sup.get("risk_score"),
-            "esg_score": sup.get("esg_score"),
-            "policy_compliant": True,
-            "covers_delivery_country": True,
-        }
-        if pricing:
-            item.update({
-                "pricing_tier_applied": (
-                    f"{pricing.get('tier_min', '')}-{pricing.get('tier_max', '')}"
-                ),
-                "unit_price_eur": pricing.get("unit_price"),
-                "total_price_eur": pricing.get("total"),
-                "standard_lead_time_days": pricing.get("standard_lead_time_days"),
-                "expedited_lead_time_days": pricing.get("expedited_lead_time_days"),
-                "expedited_unit_price_eur": pricing.get("expedited_unit_price"),
-                "expedited_total_eur": pricing.get("expedited_total"),
-            })
-        ranked.append(item)
-
-    return ranked
-
-
-# ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
-
-def _compute_contract_value(
-    eligible_suppliers: list[dict],
-    pricing_info: list[dict],
-    quantity: float | None,
-) -> float:
-    """
-    Compute the actual contract value as cheapest_price * quantity.
-    Falls back to 0 if no pricing or quantity is available.
-    """
-    if not quantity or quantity <= 0:
-        return 0.0
-
-    cheapest_unit: float | None = None
-    for p in pricing_info:
-        if p is None:
-            continue
-        up = p.get("unit_price")
-        if up is not None and (cheapest_unit is None or up < cheapest_unit):
-            cheapest_unit = up
-
-    if cheapest_unit is not None:
-        return cheapest_unit * quantity
-    return 0.0
-
 
 def _days_until(target_date_str: str | None, from_date_str: str | None = None) -> int | None:
     """Compute days between now (or from_date) and target_date."""
@@ -284,33 +158,6 @@ def _build_escalation_list(escalations: list[dict]) -> list[dict]:
     ]
 
 
-def _build_agent_opinions(agent_results: list) -> list[dict]:
-    """Convert agent results (AgentOpinion models or dicts) into dicts for JSON response."""
-    opinions = []
-    for ar in agent_results:
-        if hasattr(ar, 'model_dump'):
-            opinions.append(ar.model_dump())
-        elif hasattr(ar, 'dict'):
-            opinions.append(ar.dict())
-        elif isinstance(ar, dict):
-            rankings = []
-            for sr in ar.get("supplier_rankings", []):
-                rankings.append({
-                    "supplier_id": sr.get("id", sr.get("supplier_id", "")),
-                    "supplier_name": sr.get("supplier_name", sr.get("name", "")),
-                    "score": sr.get("score", 50),
-                    "rationale": sr.get("reasoning", sr.get("rationale", "")),
-                })
-            opinions.append({
-                "agent_name": ar.get("agent_name", "unknown"),
-                "opinion_summary": ar.get("insights", ar.get("opinion_summary", "")),
-                "supplier_rankings": rankings,
-                "confidence": ar.get("confidence"),
-                "key_factors": ar.get("key_factors", []),
-            })
-    return opinions
-
-
 # ---------------------------------------------------------------------------
 # Main pipeline functions
 # ---------------------------------------------------------------------------
@@ -325,9 +172,6 @@ async def analyze_request(request_id: str) -> dict[str, Any]:
     Returns:
         A dict compatible with the AnalysisResponse model.
     """
-    run_agents, merge_results = _import_orchestrator()
-    compute_confidence = _import_confidence()
-
     data = get_data()
 
     # 1. Load request
@@ -378,302 +222,324 @@ async def analyze_custom(
     return await _run_pipeline(request, data)
 
 
+# ---------------------------------------------------------------------------
+# Core pipeline — delegates to universal orchestration supervisor
+# ---------------------------------------------------------------------------
+
 async def _run_pipeline(
     request: dict[str, Any],
     data: Any,
 ) -> dict[str, Any]:
-    """
-    Core pipeline logic shared by analyze_request and analyze_custom.
-
-    Steps:
-        3. Filter suppliers
-        4. Get pricing for each eligible supplier
-        5. Run validation
-        6. Evaluate policies (using actual contract value)
-        7. Check escalations
-        8. Run agents in parallel
-        9. Merge results (rank suppliers)
-        10. Compute confidence
-        11. Generate explanation
-        12. Assemble AnalysisResponse
-    """
-    run_agents, merge_results = _import_orchestrator()
-    compute_confidence = _import_confidence()
+    """Core pipeline — delegates to universal orchestration supervisor."""
+    from backend.services.supervisor import execute_orchestration
 
     request_id = request.get("request_id", "UNKNOWN")
-    category_l1 = request.get("category_l1", "")
-    category_l2 = request.get("category_l2", "")
-    quantity = request.get("quantity") or 0
-    delivery_countries = request.get("delivery_countries", [])
-    delivery_country = delivery_countries[0] if delivery_countries else request.get("country", "")
 
-    # --- Step 3: Filter suppliers ---
-    eligible, excluded = filter_suppliers(
-        request, data.suppliers, data.pricing, data.policies
-    )
-
-    # --- Step 4: Get pricing for each eligible supplier ---
-    pricing_info: list[dict | None] = []
-    for sup in eligible:
-        pricing = get_pricing_for_supplier(
-            sup["supplier_id"],
-            category_l1,
-            category_l2,
-            delivery_country,
-            quantity if quantity > 0 else 1,
-            data.pricing,
-        )
-        pricing_info.append(pricing)
-
-    # --- Step 5: Validate request ---
-    validation_issues = validate_request(request, data.suppliers, data.pricing)
-
-    # --- Step 6: Evaluate policies using actual contract value ---
-    contract_value = _compute_contract_value(eligible, pricing_info, quantity)
-    # Fall back to stated budget if no pricing available
-    if contract_value == 0.0 and request.get("budget_amount"):
-        contract_value = float(request["budget_amount"])
-
-    policy_eval = evaluate_policies(
-        request, contract_value, eligible, data.policies
-    )
-
-    # --- Step 7: Check escalations ---
-    escalations = check_escalations(
-        request, validation_issues, policy_eval, eligible, pricing_info
-    )
-
-    # --- Step 8: Run agents in parallel ---
-    # Check if the request has an incumbent supplier; mark it on eligible suppliers
-    incumbent_name = request.get("incumbent_supplier")
-    for sup in eligible:
-        sup["is_incumbent"] = (
-            sup.get("supplier_name") == incumbent_name if incumbent_name else False
-        )
-        sup["is_preferred"] = sup.get("preferred_supplier", False)
-
+    # Run universal orchestration
     try:
-        agent_results = await run_agents(
-            request, eligible, pricing_info,
-            data.historical_awards, data.policies
-        )
+        result = await execute_orchestration(request, data)
     except Exception:
-        logger.exception("Agent execution failed for %s", request_id)
-        agent_results = []
+        logger.exception("Orchestration failed for %s, using deterministic fallback", request_id)
+        # Fallback: run deterministic-only path
+        return await _deterministic_fallback(request, data)
 
-    # --- Step 9: Merge results (rank suppliers) ---
-    dynamic_weights_result = None
-    try:
-        merge_output = merge_results(
-            eligible, pricing_info, agent_results, request
-        )
-        if isinstance(merge_output, tuple):
-            ranked_suppliers, dynamic_weights_result = merge_output
-        else:
-            ranked_suppliers = merge_output
-    except Exception:
-        logger.exception("merge_results failed for %s; using default ranking", request_id)
-        ranked_suppliers = _default_rank_suppliers(eligible, pricing_info)
-
-    # --- Step 10: Compute confidence ---
-    # agent_results may be AgentOpinion models or dicts
-    agent_opinions_for_display = _build_agent_opinions(agent_results) if agent_results else []
-    try:
-        confidence_result = compute_confidence(
-            agent_results, validation_issues, eligible, request
-        )
-        # Convert Pydantic model to dict if needed
-        if hasattr(confidence_result, 'model_dump'):
-            confidence_result = confidence_result.model_dump()
-        elif hasattr(confidence_result, 'dict'):
-            confidence_result = confidence_result.dict()
-    except Exception:
-        logger.exception("Confidence computation failed for %s", request_id)
-        confidence_result = {
-            "overall_score": 0.5,
-            "per_supplier": [],
-            "explanation": "Confidence computation failed.",
-            "factors": [],
-        }
-
-    # --- Step 11: Generate explanation ---
-    try:
-        explanation = generate_explanation(
-            request,
-            validation_issues,
-            policy_eval,
-            ranked_suppliers,
-            escalations,
-            agent_opinions_for_display,
-            confidence_result,
-        )
-    except Exception:
-        logger.exception("Explanation generation failed for %s", request_id)
-        explanation = {
-            "recommendation": {
-                "status": "cannot_proceed",
-                "reason": "Explanation generation failed.",
-            },
-            "audit_trail": {
-                "policies_checked": [],
-                "supplier_ids_evaluated": [
-                    s.get("supplier_id", "") for s in ranked_suppliers
-                ],
-                "data_sources_used": [],
-                "historical_awards_consulted": False,
-            },
-            "per_supplier_explanations": [],
-            "explanation_map": {},
-        }
-
-    # Enrich ranked suppliers with recommendation notes from explanation
-    explanation_map = explanation.get("explanation_map", {})
-    for sup in ranked_suppliers:
-        sid = sup.get("supplier_id", "")
-        if sid in explanation_map:
-            sup["recommendation_note"] = explanation_map[sid].get(
-                "recommendation_note", ""
-            )
-
-    # Build supplier shortlist in proper format
-    shortlist = _build_supplier_shortlist(ranked_suppliers, request, pricing_info)
-
-    # --- Step 12: Assemble AnalysisResponse ---
-    validation_dict = {
-        "completeness": (
-            "fail" if any(v.get("severity") == "critical" for v in validation_issues)
-            else "pass"
-        ),
-        "issues_detected": validation_issues,
-    }
-
-    # Convert agent opinions to dicts if they are Pydantic models
-    agent_opinions_dicts = []
-    for ao in agent_opinions_for_display:
-        if hasattr(ao, 'model_dump'):
-            agent_opinions_dicts.append(ao.model_dump())
-        elif isinstance(ao, dict):
-            agent_opinions_dicts.append(ao)
-        else:
-            agent_opinions_dicts.append(ao)
-
-    # Convert dynamic weights to dict if Pydantic
-    dw_dict = None
-    if dynamic_weights_result is not None:
-        if hasattr(dynamic_weights_result, 'model_dump'):
-            dw_dict = dynamic_weights_result.model_dump()
-        elif isinstance(dynamic_weights_result, dict):
-            dw_dict = dynamic_weights_result
-        else:
-            dw_dict = dynamic_weights_result
-
-    response: dict[str, Any] = {
-        "request_id": request_id,
-        "processed_at": datetime.utcnow().isoformat() + "Z",
-        "request_interpretation": _build_request_interpretation(request),
-        "validation": validation_dict,
-        "policy_evaluation": _build_policy_evaluation_dict(policy_eval),
-        "supplier_shortlist": shortlist,
-        "suppliers_excluded": _build_excluded_list(excluded),
-        "escalations": _build_escalation_list(escalations),
-        "recommendation": explanation.get("recommendation", {}),
-        "audit_trail": explanation.get("audit_trail", {}),
-        "agent_opinions": agent_opinions_dicts,
-        "confidence": confidence_result,
-        "dynamic_weights": dw_dict,
-        "approval_routing": _build_approval_routing(escalations, policy_eval),
-    }
-
-    return response
+    # Convert OrchestrationResult to AnalysisResponse format
+    return _assemble_from_orchestration(request, result)
 
 
-def _build_supplier_shortlist(
-    ranked_suppliers: list[dict],
-    request: dict,
-    pricing_info: list[dict],
-) -> list[dict]:
-    """Convert ranked suppliers into the shortlist format matching example output."""
+# ---------------------------------------------------------------------------
+# Assemble response from OrchestrationResult
+# ---------------------------------------------------------------------------
+
+def _assemble_from_orchestration(
+    request: dict[str, Any],
+    result: Any,  # OrchestrationResult
+) -> dict[str, Any]:
+    """Convert OrchestrationResult into AnalysisResponse dict."""
+    from datetime import datetime
+
+    snapshot = result.constraint_snapshot
+    judge = result.judge_decision
+    reviewer = result.reviewer_verdict
+    critic = result.critic_output
+
+    # Build supplier shortlist from judge ranking
     quantity = request.get("quantity", 1) or 1
     currency = request.get("currency", "EUR")
     incumbent = request.get("incumbent_supplier")
 
     # Build pricing lookup
     price_map = {}
-    for p in pricing_info:
+    for p in (snapshot.pricing_info if snapshot else []):
         if p is not None:
             sid = p.get("supplier_id", "")
             if sid:
                 price_map[sid] = p
 
     shortlist = []
-    for rank_idx, sup in enumerate(ranked_suppliers, 1):
-        sid = sup.get("supplier_id", "")
-        pricing = price_map.get(sid, {})
+    if judge and judge.final_ranking:
+        for js in judge.final_ranking:
+            pricing = price_map.get(js.supplier_id, {})
+            unit_price = pricing.get("unit_price", 0)
+            exp_price = pricing.get("expedited_unit_price", 0)
 
-        unit_price = pricing.get("unit_price", sup.get("unit_price_eur", 0))
-        exp_price = pricing.get("expedited_unit_price", sup.get("expedited_unit_price_eur", 0))
+            # Find supplier info from eligible list
+            sup_info = {}
+            for s in (snapshot.eligible_suppliers if snapshot else []):
+                if s.get("supplier_id") == js.supplier_id:
+                    sup_info = s
+                    break
 
-        item = {
-            "rank": rank_idx,
-            "supplier_id": sid,
+            shortlist.append({
+                "rank": js.rank,
+                "supplier_id": js.supplier_id,
+                "supplier_name": js.supplier_name,
+                "preferred": bool(sup_info.get("preferred_supplier") or sup_info.get("is_preferred", False)),
+                "incumbent": sup_info.get("supplier_name") == incumbent if incumbent else False,
+                "pricing_tier_applied": f"{pricing.get('tier_min', '')}-{pricing.get('tier_max', '')} units",
+                "unit_price_eur": unit_price,
+                "total_price_eur": round(unit_price * quantity, 2),
+                "standard_lead_time_days": pricing.get("standard_lead_time_days"),
+                "expedited_lead_time_days": pricing.get("expedited_lead_time_days"),
+                "expedited_unit_price_eur": exp_price,
+                "expedited_total_eur": round(exp_price * quantity, 2) if exp_price else None,
+                "quality_score": sup_info.get("quality_score"),
+                "risk_score": sup_info.get("risk_score"),
+                "esg_score": sup_info.get("esg_score"),
+                "composite_score": js.composite_score,
+                "currency": currency,
+                "policy_compliant": True,
+                "covers_delivery_country": True,
+                "recommendation_note": js.justification,
+            })
+
+    # Build recommendation
+    has_blocking = any(e.get("blocking", False) for e in (snapshot.escalations if snapshot else []))
+    has_critical = any(v.get("severity") == "critical" for v in (snapshot.validation_issues if snapshot else []))
+
+    if has_blocking or has_critical:
+        rec_status = "cannot_proceed"
+    elif snapshot and snapshot.escalations:
+        rec_status = "proceed_with_conditions"
+    else:
+        rec_status = "can_proceed"
+
+    top = judge.final_ranking[0] if judge and judge.final_ranking else None
+    recommendation = {
+        "status": rec_status,
+        "reason": judge.confidence_explanation if judge else "Analysis complete.",
+        "preferred_supplier_if_resolved": top.supplier_name if top else None,
+        "preferred_supplier_rationale": top.justification if top else None,
+        "minimum_budget_required": None,
+        "minimum_budget_currency": None,
+    }
+
+    # Build governance output
+    governance = None
+    if critic or judge or reviewer:
+        governance = {
+            "critic_findings": [f.model_dump() for f in critic.findings] if critic else [],
+            "judge_decision": judge.model_dump() if judge else None,
+            "reviewer_verdict": reviewer.model_dump() if reviewer else None,
+            "governance_memory_summary": [
+                e.content for e in (result.governance_memory_entries or [])[:5]
+            ],
+        }
+
+    # Build agent opinions for display
+    agent_opinions = []
+    for op in (result.specialist_opinions or []):
+        if hasattr(op, "model_dump"):
+            agent_opinions.append(op.model_dump())
+        elif isinstance(op, dict):
+            agent_opinions.append(op)
+
+    # Build audit trail
+    audit_trail = {
+        "policies_checked": [],
+        "supplier_ids_evaluated": [s.get("supplier_id", "") for s in (snapshot.eligible_suppliers if snapshot else [])],
+        "data_sources_used": ["requests.json", "suppliers.csv", "pricing.csv", "policies.json", "historical_awards.csv"],
+        "historical_awards_consulted": True,
+    }
+
+    # Confidence from judge
+    confidence = {
+        "overall_score": judge.confidence_assessment if judge else 0.5,
+        "per_supplier": [],
+        "explanation": judge.confidence_explanation if judge else "",
+        "factors": judge.bias_checks if judge else [],
+    }
+
+    # Build excluded list
+    excluded = [
+        {
+            "supplier_id": e.get("supplier_id", ""),
+            "supplier_name": e.get("supplier_name", ""),
+            "reason": e.get("exclusion_reason", "Excluded by filter"),
+        }
+        for e in (snapshot.excluded_suppliers if snapshot else [])
+    ]
+
+    # Build escalation list
+    escalation_list = [
+        {
+            "escalation_id": e.get("escalation_id", ""),
+            "rule": e.get("rule"),
+            "trigger": e.get("trigger"),
+            "escalate_to": e.get("escalate_to"),
+            "blocking": e.get("blocking", False),
+            "source": e.get("source", "deterministic"),
+        }
+        for e in (snapshot.escalations if snapshot else [])
+    ]
+
+    # Build approval routing
+    approval_steps = []
+    if snapshot:
+        approval = snapshot.policy_evaluation.get("approval_threshold") or {}
+        managed_by = approval.get("managed_by", [])
+        for role in (managed_by if isinstance(managed_by, list) else [managed_by] if managed_by else []):
+            approval_steps.append({"step": len(approval_steps) + 1, "role": str(role), "required": True, "status": "pending"})
+        for esc in snapshot.escalations:
+            target = esc.get("escalate_to", "")
+            if target and target not in [s.get("role") for s in approval_steps]:
+                approval_steps.append({
+                    "step": len(approval_steps) + 1,
+                    "role": target,
+                    "required": esc.get("blocking", False),
+                    "status": "escalation_required",
+                })
+
+    # Process trace
+    process_trace = None
+    if result.process_trace:
+        process_trace = result.process_trace.model_dump()
+
+    response = {
+        "request_id": request.get("request_id", "UNKNOWN"),
+        "processed_at": datetime.utcnow().isoformat() + "Z",
+        "request_interpretation": _build_request_interpretation(request),
+        "validation": {
+            "completeness": "fail" if has_critical else "pass",
+            "issues_detected": snapshot.validation_issues if snapshot else [],
+        },
+        "policy_evaluation": _build_policy_evaluation_dict(snapshot.policy_evaluation) if snapshot else {},
+        "supplier_shortlist": shortlist,
+        "suppliers_excluded": excluded,
+        "escalations": escalation_list,
+        "recommendation": recommendation,
+        "audit_trail": audit_trail,
+        "agent_opinions": agent_opinions,
+        "confidence": confidence,
+        "dynamic_weights": {
+            "base_weights": {"price": 0.30, "quality": 0.20, "risk": 0.15, "esg": 0.10, "lead_time": 0.10, "preferred": 0.10, "incumbent": 0.05},
+            "adjusted_weights": {},
+            "adjustments": [],
+        },
+        "approval_routing": {"steps": approval_steps},
+        # New universal orchestration fields
+        "governance": governance,
+        "process_trace": process_trace,
+        "activated_modules": result.activation_plan.activated_modules if result.activation_plan else [],
+        "discovery_result": result.discovery_result.model_dump() if result.discovery_result else None,
+        "bundle_result": result.bundle_result.model_dump() if result.bundle_result else None,
+    }
+
+    return response
+
+
+# ---------------------------------------------------------------------------
+# Deterministic fallback
+# ---------------------------------------------------------------------------
+
+async def _deterministic_fallback(
+    request: dict[str, Any],
+    data: Any,
+) -> dict[str, Any]:
+    """Minimal deterministic-only fallback when orchestration completely fails."""
+    from backend.services.rule_engine import validate_request, evaluate_policies
+    from backend.services.supplier_filter import filter_suppliers, get_pricing_for_supplier
+    from backend.services.escalation import check_escalations
+
+    category_l1 = request.get("category_l1", "")
+    category_l2 = request.get("category_l2", "")
+    quantity = request.get("quantity") or 0
+    delivery_countries = request.get("delivery_countries", [])
+    delivery_country = delivery_countries[0] if delivery_countries else request.get("country", "")
+
+    eligible, excluded = filter_suppliers(request, data.suppliers, data.pricing, data.policies)
+    pricing_info = []
+    for sup in eligible:
+        p = get_pricing_for_supplier(sup["supplier_id"], category_l1, category_l2, delivery_country, quantity if quantity > 0 else 1, data.pricing)
+        pricing_info.append(p)
+
+    validation_issues = validate_request(request, data.suppliers, data.pricing)
+    contract_value = 0.0
+    cheapest = None
+    for p in pricing_info:
+        if p and p.get("unit_price"):
+            if cheapest is None or p["unit_price"] < cheapest:
+                cheapest = p["unit_price"]
+    if cheapest and quantity:
+        contract_value = cheapest * quantity
+    if contract_value == 0.0 and request.get("budget_amount"):
+        contract_value = float(request["budget_amount"])
+
+    policy_eval = evaluate_policies(request, contract_value, eligible, data.policies)
+    escalations = check_escalations(request, validation_issues, policy_eval, eligible, pricing_info)
+
+    has_blocking = any(e.get("blocking", False) for e in escalations)
+    has_critical = any(v.get("severity") == "critical" for v in validation_issues)
+
+    # Simple cheapest-first ranking
+    scored = []
+    for i, sup in enumerate(eligible):
+        p = pricing_info[i] if i < len(pricing_info) else None
+        total = p["total"] if p else float("inf")
+        scored.append((total, sup, p))
+    scored.sort(key=lambda x: x[0])
+
+    currency = request.get("currency", "EUR")
+    shortlist = []
+    for rank, (total, sup, pricing) in enumerate(scored, 1):
+        shortlist.append({
+            "rank": rank,
+            "supplier_id": sup["supplier_id"],
             "supplier_name": sup.get("supplier_name", ""),
-            "preferred": bool(sup.get("preferred_supplier") or sup.get("is_preferred", False)),
-            "incumbent": sup.get("supplier_name") == incumbent if incumbent else False,
-            "pricing_tier_applied": f"{pricing.get('tier_min', pricing.get('min_quantity', ''))}-{pricing.get('tier_max', pricing.get('max_quantity', ''))} units",
-            "unit_price_eur": unit_price,
-            "total_price_eur": round(unit_price * quantity, 2),
-            "standard_lead_time_days": pricing.get("standard_lead_time_days", sup.get("lead_time_days")),
-            "expedited_lead_time_days": pricing.get("expedited_lead_time_days"),
-            "expedited_unit_price_eur": exp_price,
-            "expedited_total_eur": round(exp_price * quantity, 2) if exp_price else None,
+            "preferred": bool(sup.get("preferred_supplier", False)),
+            "incumbent": False,
+            "unit_price_eur": pricing.get("unit_price", 0) if pricing else 0,
+            "total_price_eur": total if total != float("inf") else 0,
             "quality_score": sup.get("quality_score"),
             "risk_score": sup.get("risk_score"),
             "esg_score": sup.get("esg_score"),
-            "composite_score": sup.get("composite_score"),
             "currency": currency,
             "policy_compliant": True,
             "covers_delivery_country": True,
-            "recommendation_note": sup.get("recommendation_note", ""),
-        }
-        shortlist.append(item)
-
-    return shortlist
-
-
-def _build_approval_routing(escalations: list[dict], policy_eval: dict) -> dict:
-    """Build simulated approval routing based on escalations and policy."""
-    steps = []
-    approval = policy_eval.get("approval_threshold") or {}
-    managed_by = approval.get("managed_by", [])
-
-    for role in managed_by:
-        steps.append({
-            "step": len(steps) + 1,
-            "role": role.replace("_", " ").title(),
-            "required": True,
-            "status": "pending",
+            "recommendation_note": "Deterministic fallback — orchestration unavailable.",
         })
 
-    for esc in escalations:
-        target = esc.get("escalate_to", "")
-        if target and target not in [s.get("role") for s in steps]:
-            steps.append({
-                "step": len(steps) + 1,
-                "role": target,
-                "required": esc.get("blocking", False),
-                "status": "escalation_required",
-            })
-
-    deviation = approval.get("deviation_approval", [])
-    if isinstance(deviation, str):
-        deviation = [deviation] if deviation else []
-    for role in deviation:
-        if role and role not in [s.get("role") for s in steps]:
-            steps.append({
-                "step": len(steps) + 1,
-                "role": role,
-                "required": True,
-                "status": "pending",
-            })
-
-    return {"steps": steps}
+    return {
+        "request_id": request.get("request_id", "UNKNOWN"),
+        "processed_at": datetime.utcnow().isoformat() + "Z",
+        "request_interpretation": _build_request_interpretation(request),
+        "validation": {"completeness": "fail" if has_critical else "pass", "issues_detected": validation_issues},
+        "policy_evaluation": _build_policy_evaluation_dict(policy_eval),
+        "supplier_shortlist": shortlist,
+        "suppliers_excluded": _build_excluded_list(excluded),
+        "escalations": _build_escalation_list(escalations),
+        "recommendation": {
+            "status": "cannot_proceed" if (has_blocking or has_critical) else "proceed_with_conditions" if escalations else "can_proceed",
+            "reason": "Deterministic fallback — full orchestration was unavailable.",
+        },
+        "audit_trail": {"policies_checked": [], "supplier_ids_evaluated": [s["supplier_id"] for s in eligible], "data_sources_used": ["suppliers.csv", "pricing.csv", "policies.json"], "historical_awards_consulted": False},
+        "agent_opinions": [],
+        "confidence": {"overall_score": 0.2, "per_supplier": [], "explanation": "Low confidence: orchestration failed, deterministic fallback used.", "factors": ["Orchestration failure"]},
+        "dynamic_weights": None,
+        "approval_routing": {"steps": []},
+        "governance": None,
+        "process_trace": None,
+        "activated_modules": [],
+        "discovery_result": None,
+        "bundle_result": None,
+    }

@@ -47,3 +47,6 @@ for _region, _countries in _REGION_COUNTRIES.items():
         COUNTRY_TO_REGION[_country] = _region
 
 REGION_COUNTRIES = _REGION_COUNTRIES
+
+GOVERNANCE_MEMORY_ENABLED: bool = True
+BUNDLING_ENABLED: bool = True

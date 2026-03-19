@@ -204,6 +204,12 @@ export interface AnalysisResponse {
   confidence?: ConfidenceResult;
   dynamic_weights?: DynamicWeights;
   approval_routing?: ApprovalRouting;
+  // Universal orchestration fields
+  governance?: GovernanceOutput;
+  process_trace?: ProcessTrace;
+  activated_modules?: string[];
+  discovery_result?: DiscoveryResult;
+  bundle_result?: BundleModuleResult;
 }
 
 export interface CategoryStat {
@@ -230,6 +236,105 @@ export interface CustomRequestInput {
   quantity?: number;
   delivery_countries?: string[];
   required_by_date?: string;
+}
+
+// --- Governance Types ---
+
+export interface CriticFinding {
+  finding_id: string;
+  finding_type: string;
+  affected_agents: string[];
+  affected_suppliers: string[];
+  description: string;
+  severity: string;
+  suggested_action?: string;
+}
+
+export interface JudgedSupplier {
+  supplier_id: string;
+  supplier_name: string;
+  rank: number;
+  composite_score: number;
+  justification: string;
+}
+
+export interface DisagreementResolution {
+  topic: string;
+  agents_involved: string[];
+  resolution: string;
+  reasoning: string;
+}
+
+export interface JudgeDecision {
+  final_ranking: JudgedSupplier[];
+  disagreements_resolved: DisagreementResolution[];
+  bias_checks: string[];
+  confidence_assessment: number;
+  confidence_explanation: string;
+  weight_rationale: string;
+}
+
+export interface ReviewIssue {
+  issue_type: string;
+  description: string;
+  severity: string;
+}
+
+export interface ReviewerVerdict {
+  audit_ready: boolean;
+  issues: ReviewIssue[];
+  consistency_checks: string[];
+  evidence_gaps: string[];
+  sign_off_note: string;
+}
+
+export interface GovernanceOutput {
+  critic_findings: CriticFinding[];
+  judge_decision?: JudgeDecision;
+  reviewer_verdict?: ReviewerVerdict;
+  governance_memory_summary: string[];
+}
+
+// --- Process Trace Types ---
+
+export interface ProcessStep {
+  step_id: string;
+  step_name: string;
+  step_type: string;
+  started_at?: string;
+  completed_at?: string;
+  duration_ms?: number;
+  input_summary?: string;
+  output_summary?: string;
+  status: string;
+}
+
+export interface ProcessTrace {
+  steps: ProcessStep[];
+  activated_modules: string[];
+  total_duration_ms?: number;
+}
+
+// --- Discovery & Bundling Types ---
+
+export interface DiscoveryResult {
+  discovery_strategy: string;
+  suggested_qualification_criteria: string[];
+  market_notes: string;
+  estimated_timeline?: string;
+  interim_recommendation: string;
+}
+
+export interface BundleModuleResult {
+  bundled: boolean;
+  original_quantity: number;
+  bundled_quantity: number;
+  related_requests: string[];
+  original_pricing_tier?: string;
+  new_pricing_tier?: string;
+  savings_pct?: number;
+  capacity_check: string;
+  escalation_triggered?: string;
 }
 
 export interface PaginatedRequests {

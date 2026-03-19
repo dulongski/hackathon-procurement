@@ -282,3 +282,168 @@ def _safe_bool(val):
     if isinstance(val, str):
         return val.strip().lower() in ("true", "1", "yes")
     return bool(val)
+
+
+def detect_catalog_gap(
+    eligible: list[dict],
+    excluded: list[dict],
+    category_l1: str,
+    category_l2: str,
+    delivery_country: str,
+) -> dict:
+    """Detect whether there is a catalog gap (no eligible approved suppliers).
+
+    Returns a dict matching CatalogGapSignal model.
+    """
+    if len(eligible) > 0:
+        return {
+            "has_gap": False,
+            "reason": "",
+            "category_l1": category_l1,
+            "category_l2": category_l2,
+            "delivery_country": delivery_country,
+        }
+
+    # Determine reason from exclusion patterns
+    reasons = []
+    exclusion_reasons = [e.get("exclusion_reason", "") for e in excluded]
+
+    if not excluded:
+        reasons.append(f"No suppliers found for category {category_l1}/{category_l2}")
+    else:
+        contract_issues = sum(1 for r in exclusion_reasons if "contract" in r.lower())
+        coverage_issues = sum(1 for r in exclusion_reasons if "cover" in r.lower() or "country" in r.lower())
+        restriction_issues = sum(1 for r in exclusion_reasons if "restrict" in r.lower())
+        residency_issues = sum(1 for r in exclusion_reasons if "residency" in r.lower())
+
+        if contract_issues:
+            reasons.append(f"{contract_issues} supplier(s) have inactive contracts")
+        if coverage_issues:
+            reasons.append(f"{coverage_issues} supplier(s) don't cover {delivery_country}")
+        if restriction_issues:
+            reasons.append(f"{restriction_issues} supplier(s) are policy-restricted")
+        if residency_issues:
+            reasons.append(f"{residency_issues} supplier(s) fail data residency requirements")
+
+    return {
+        "has_gap": True,
+        "reason": "; ".join(reasons) if reasons else "All suppliers excluded by eligibility filters",
+        "category_l1": category_l1,
+        "category_l2": category_l2,
+        "delivery_country": delivery_country,
+    }
+
+
+def detect_bundle_opportunity(
+    request: dict,
+    all_requests: list[dict],
+    pricing_data: list[dict],
+) -> dict:
+    """Detect whether bundling with other pending requests could improve pricing.
+
+    Returns a dict matching BundleOpportunitySignal model.
+    """
+    category_l1 = request.get("category_l1", "")
+    category_l2 = request.get("category_l2", "")
+    quantity = request.get("quantity") or 0
+    request_id = request.get("request_id", "")
+    required_by = request.get("required_by_date")
+
+    # Find other requests in the same category that could be bundled
+    related = []
+    combined_qty = quantity
+    for r in all_requests:
+        if r.get("request_id") == request_id:
+            continue
+        if r.get("category_l1") != category_l1 or r.get("category_l2") != category_l2:
+            continue
+        if r.get("status", "").lower() in ("cancelled", "completed", "awarded"):
+            continue
+        r_qty = r.get("quantity") or 0
+        if r_qty > 0:
+            related.append(r["request_id"])
+            combined_qty += r_qty
+
+    if not related or combined_qty <= quantity:
+        return {
+            "has_opportunity": False,
+            "related_request_ids": [],
+            "combined_quantity": quantity,
+            "current_tier": None,
+            "potential_tier": None,
+            "estimated_savings_pct": None,
+            "hold_window_feasible": False,
+        }
+
+    # Check hold window feasibility (can we wait?)
+    hold_window_feasible = True
+    if required_by:
+        from datetime import datetime, date
+        try:
+            if isinstance(required_by, str):
+                req_date = datetime.fromisoformat(required_by.replace("Z", "+00:00")).date()
+            else:
+                req_date = required_by
+            days_available = (req_date - date.today()).days
+            if days_available < 7:  # Less than 7 days = can't hold for bundling
+                hold_window_feasible = False
+        except (ValueError, TypeError):
+            pass
+
+    # Estimate tier improvement by looking at pricing data
+    current_tier = None
+    potential_tier = None
+    estimated_savings = None
+
+    matching_pricing = [
+        p for p in pricing_data
+        if p.get("category_l1") == category_l1
+        and p.get("category_l2") == category_l2
+    ]
+
+    if matching_pricing:
+        # Find current tier
+        for p in matching_pricing:
+            try:
+                min_q = float(p.get("min_quantity", 0))
+                max_q = float(p.get("max_quantity", 999999999))
+                if min_q <= quantity <= max_q:
+                    current_tier = f"{int(min_q)}-{int(max_q)}"
+                    current_price = float(p.get("unit_price", 0))
+                    break
+            except (ValueError, TypeError):
+                continue
+
+        # Find potential tier with combined quantity
+        for p in matching_pricing:
+            try:
+                min_q = float(p.get("min_quantity", 0))
+                max_q = float(p.get("max_quantity", 999999999))
+                if min_q <= combined_qty <= max_q:
+                    potential_tier = f"{int(min_q)}-{int(max_q)}"
+                    potential_price = float(p.get("unit_price", 0))
+                    if current_tier and current_price and potential_price:
+                        estimated_savings = round(
+                            ((current_price - potential_price) / current_price) * 100, 1
+                        )
+                    break
+            except (ValueError, TypeError):
+                continue
+
+    has_opportunity = (
+        len(related) > 0
+        and hold_window_feasible
+        and current_tier != potential_tier
+        and estimated_savings is not None
+        and estimated_savings > 0
+    )
+
+    return {
+        "has_opportunity": has_opportunity,
+        "related_request_ids": related[:10],
+        "combined_quantity": combined_qty,
+        "current_tier": current_tier,
+        "potential_tier": potential_tier,
+        "estimated_savings_pct": estimated_savings,
+        "hold_window_feasible": hold_window_feasible,
+    }

@@ -205,6 +205,13 @@ class AnalysisResponse(BaseModel):
     dynamic_weights: Optional[DynamicWeights] = None
     approval_routing: Optional[ApprovalRouting] = None
 
+    # Universal orchestration fields
+    governance: Optional[GovernanceOutput] = None
+    process_trace: Optional[ProcessTrace] = None
+    activated_modules: list[str] = Field(default_factory=list)
+    discovery_result: Optional[DiscoveryResult] = None
+    bundle_result: Optional[BundleModuleResult] = None
+
 
 # ---------------------------------------------------------------------------
 # Request / input models
@@ -248,3 +255,198 @@ class StatsResponse(BaseModel):
     categories: list[CategoryStat] = Field(default_factory=list)
     regions: list[str] = Field(default_factory=list)
     policy_types: list[str] = Field(default_factory=list)
+
+
+# ---------------------------------------------------------------------------
+# Constraint Snapshot
+# ---------------------------------------------------------------------------
+
+class CatalogGapSignal(BaseModel):
+    has_gap: bool = False
+    reason: str = ""
+    category_l1: str = ""
+    category_l2: str = ""
+    delivery_country: str = ""
+
+class BundleOpportunitySignal(BaseModel):
+    has_opportunity: bool = False
+    related_request_ids: list[str] = Field(default_factory=list)
+    combined_quantity: float = 0
+    current_tier: Optional[str] = None
+    potential_tier: Optional[str] = None
+    estimated_savings_pct: Optional[float] = None
+    hold_window_feasible: bool = False
+
+class ConstraintSnapshot(BaseModel):
+    eligible_suppliers: list[dict[str, Any]] = Field(default_factory=list)
+    excluded_suppliers: list[dict[str, Any]] = Field(default_factory=list)
+    pricing_info: list[Any] = Field(default_factory=list)
+    validation_issues: list[dict[str, Any]] = Field(default_factory=list)
+    policy_evaluation: dict[str, Any] = Field(default_factory=dict)
+    escalations: list[dict[str, Any]] = Field(default_factory=list)
+    contract_value: float = 0.0
+    catalog_gap: Optional[CatalogGapSignal] = None
+    bundle_opportunity: Optional[BundleOpportunitySignal] = None
+
+
+# ---------------------------------------------------------------------------
+# Activation Plan
+# ---------------------------------------------------------------------------
+
+class ActivationPlan(BaseModel):
+    activated_modules: list[str] = Field(default_factory=list)
+    activation_reasons: dict[str, str] = Field(default_factory=dict)
+    specialist_agents: list[str] = Field(default_factory=list)
+
+
+# ---------------------------------------------------------------------------
+# Critic
+# ---------------------------------------------------------------------------
+
+class CriticFinding(BaseModel):
+    finding_id: str
+    finding_type: str  # contradiction, weak_evidence, hidden_risk, unsupported_claim, bias_alert
+    affected_agents: list[str] = Field(default_factory=list)
+    affected_suppliers: list[str] = Field(default_factory=list)
+    description: str
+    severity: str  # high, medium, low
+    suggested_action: Optional[str] = None
+
+class CriticOutput(BaseModel):
+    findings: list[CriticFinding] = Field(default_factory=list)
+    overall_assessment: str = ""
+    confidence: float = 0.5
+
+
+# ---------------------------------------------------------------------------
+# Judge
+# ---------------------------------------------------------------------------
+
+class JudgedSupplier(BaseModel):
+    supplier_id: str
+    supplier_name: str
+    rank: int
+    composite_score: float
+    justification: str
+
+class DisagreementResolution(BaseModel):
+    topic: str
+    agents_involved: list[str] = Field(default_factory=list)
+    resolution: str
+    reasoning: str
+
+class JudgeDecision(BaseModel):
+    final_ranking: list[JudgedSupplier] = Field(default_factory=list)
+    disagreements_resolved: list[DisagreementResolution] = Field(default_factory=list)
+    bias_checks: list[str] = Field(default_factory=list)
+    confidence_assessment: float = 0.5
+    confidence_explanation: str = ""
+    weight_rationale: str = ""
+
+
+# ---------------------------------------------------------------------------
+# Reviewer
+# ---------------------------------------------------------------------------
+
+class ReviewIssue(BaseModel):
+    issue_type: str
+    description: str
+    severity: str
+
+class ReviewerVerdict(BaseModel):
+    audit_ready: bool = False
+    issues: list[ReviewIssue] = Field(default_factory=list)
+    consistency_checks: list[str] = Field(default_factory=list)
+    evidence_gaps: list[str] = Field(default_factory=list)
+    sign_off_note: str = ""
+
+
+# ---------------------------------------------------------------------------
+# Governance Output
+# ---------------------------------------------------------------------------
+
+class GovernanceOutput(BaseModel):
+    critic_findings: list[CriticFinding] = Field(default_factory=list)
+    judge_decision: Optional[JudgeDecision] = None
+    reviewer_verdict: Optional[ReviewerVerdict] = None
+    governance_memory_summary: list[str] = Field(default_factory=list)
+
+
+# ---------------------------------------------------------------------------
+# Discovery
+# ---------------------------------------------------------------------------
+
+class DiscoveryResult(BaseModel):
+    discovery_strategy: str = ""
+    suggested_qualification_criteria: list[str] = Field(default_factory=list)
+    market_notes: str = ""
+    estimated_timeline: Optional[str] = None
+    interim_recommendation: str = ""
+
+
+# ---------------------------------------------------------------------------
+# Bundling
+# ---------------------------------------------------------------------------
+
+class BundleModuleResult(BaseModel):
+    bundled: bool = False
+    original_quantity: float = 0
+    bundled_quantity: float = 0
+    related_requests: list[str] = Field(default_factory=list)
+    original_pricing_tier: Optional[str] = None
+    new_pricing_tier: Optional[str] = None
+    savings_pct: Optional[float] = None
+    capacity_check: str = "not_checked"  # within_capacity, exceeded, partial, not_checked
+    escalation_triggered: Optional[str] = None
+
+
+# ---------------------------------------------------------------------------
+# Memory
+# ---------------------------------------------------------------------------
+
+class MemoryEntry(BaseModel):
+    entry_id: str
+    scope: str  # supervisor, critic, judge, reviewer, specialist:*
+    entry_type: str
+    content: str
+    created_at: str
+    source_request_id: str
+    relevance_score: float = 1.0
+
+
+# ---------------------------------------------------------------------------
+# Process Trace
+# ---------------------------------------------------------------------------
+
+class ProcessStep(BaseModel):
+    step_id: str
+    step_name: str
+    step_type: str  # deterministic, agentic, governance
+    started_at: Optional[str] = None
+    completed_at: Optional[str] = None
+    duration_ms: Optional[int] = None
+    input_summary: Optional[str] = None
+    output_summary: Optional[str] = None
+    status: str = "pending"  # pending, completed, skipped, failed
+
+class ProcessTrace(BaseModel):
+    steps: list[ProcessStep] = Field(default_factory=list)
+    activated_modules: list[str] = Field(default_factory=list)
+    total_duration_ms: Optional[int] = None
+
+
+# ---------------------------------------------------------------------------
+# Orchestration Result
+# ---------------------------------------------------------------------------
+
+class OrchestrationResult(BaseModel):
+    constraint_snapshot: Optional[ConstraintSnapshot] = None
+    activation_plan: Optional[ActivationPlan] = None
+    specialist_opinions: list[AgentOpinion] = Field(default_factory=list)
+    critic_output: Optional[CriticOutput] = None
+    judge_decision: Optional[JudgeDecision] = None
+    reviewer_verdict: Optional[ReviewerVerdict] = None
+    discovery_result: Optional[DiscoveryResult] = None
+    bundle_result: Optional[BundleModuleResult] = None
+    process_trace: Optional[ProcessTrace] = None
+    governance_memory_entries: list[MemoryEntry] = Field(default_factory=list)

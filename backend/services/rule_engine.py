@@ -185,26 +185,36 @@ def validate_request(request, suppliers_data, pricing_data):
                     break
 
     # --- Budget sufficiency check ---
-    if budget is not None and budget > 0 and quantity is not None and quantity > 0:
+    budget_max = request.get("budget_max")
+    budget_for_check = budget_max if budget_max and budget_max > 0 else budget
+    if budget_for_check is not None and budget_for_check > 0 and quantity is not None and quantity > 0:
         cheapest_total = _find_cheapest_total(
             category_l1, category_l2, delivery_countries, quantity,
             currency, suppliers_data, pricing_data
         )
-        if cheapest_total is not None and cheapest_total > budget:
-            shortfall = cheapest_total - budget
+        if cheapest_total is not None and cheapest_total > budget_for_check:
+            shortfall = cheapest_total - budget_for_check
             max_affordable_qty = _find_max_affordable_quantity(
-                category_l1, category_l2, delivery_countries, budget,
+                category_l1, category_l2, delivery_countries, budget_for_check,
                 currency, suppliers_data, pricing_data
             )
+            budget_min = request.get("budget_min")
+            budget_note = ""
+            if budget_min and cheapest_total > budget_min:
+                budget_note = (
+                    f" Note: cheapest total also exceeds budget minimum of "
+                    f"{currency} {budget_min:,.2f}."
+                )
             issue_counter += 1
             issues.append({
                 "issue_id": f"V-{issue_counter:03d}",
                 "severity": "critical",
                 "type": "budget_insufficient",
                 "description": (
-                    f"Budget of {currency} {budget:,.2f} cannot cover {quantity} units at any "
+                    f"Budget of {currency} {budget_for_check:,.2f} cannot cover {quantity} units at any "
                     f"compliant supplier's standard pricing. Minimum total is "
                     f"{currency} {cheapest_total:,.2f} - {currency} {shortfall:,.2f} over budget."
+                    + budget_note
                 ),
                 "action_required": (
                     f"Requester must either increase budget to at least "

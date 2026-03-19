@@ -7,6 +7,7 @@ import logging
 from typing import Any
 
 from backend.services.agents.base import BaseAgent
+from backend.config import SPECIALIST_MAX_TOKENS
 
 logger = logging.getLogger(__name__)
 
@@ -14,7 +15,8 @@ SYSTEM_PROMPT = (
     "You are a procurement value-for-money specialist. "
     "Evaluate suppliers based on pricing competitiveness, total cost of ownership, "
     "budget alignment, and pricing tier optimization. "
-    "Consider volume discounts, expedited pricing, and overall cost efficiency."
+    "Consider volume discounts, expedited pricing, and overall cost efficiency.\n\n"
+    "Be precise. Each rationale must cite 1-2 specific data points. No filler. Return compact JSON."
 )
 
 
@@ -22,7 +24,7 @@ class ValueAgent(BaseAgent):
     """Evaluates pricing and budget fit across eligible suppliers."""
 
     def __init__(self):
-        super().__init__("value_for_money")
+        super().__init__("value_for_money", max_tokens=SPECIALIST_MAX_TOKENS)
 
     async def analyze(self, context: dict) -> dict:
         """

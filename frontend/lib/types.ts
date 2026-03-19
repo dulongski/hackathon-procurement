@@ -27,8 +27,11 @@ export interface RequestInterpretation {
   quantity?: number;
   unit_of_measure?: string;
   budget_amount?: number;
+  budget_min?: number;
+  budget_max?: number;
   currency?: string;
   delivery_country?: string;
+  delivery_countries?: string[];
   required_by_date?: string;
   days_until_required?: number;
   data_residency_required?: boolean;
@@ -36,6 +39,11 @@ export interface RequestInterpretation {
   preferred_supplier_stated?: string;
   incumbent_supplier?: string;
   requester_instruction?: string;
+  quantity_inferred?: boolean;
+  quantity_confidence?: string;
+  category_confidence?: number;
+  is_whitespace?: boolean;
+  urgency_level?: string;
 }
 
 export interface ValidationIssue {
@@ -210,6 +218,11 @@ export interface AnalysisResponse {
   activated_modules?: string[];
   discovery_result?: DiscoveryResult;
   bundle_result?: BundleModuleResult;
+  // New fields
+  near_miss_suppliers?: NearMissSupplier[];
+  supplier_heatmap?: SupplierHeatmapRow[];
+  is_rejected?: boolean;
+  rejection_message?: string;
 }
 
 export interface CategoryStat {
@@ -228,14 +241,6 @@ export interface StatsResponse {
 
 export interface CustomRequestInput {
   request_text: string;
-  category_l1?: string;
-  category_l2?: string;
-  country?: string;
-  budget_amount?: number;
-  currency?: string;
-  quantity?: number;
-  delivery_countries?: string[];
-  required_by_date?: string;
 }
 
 // --- Governance Types ---
@@ -307,12 +312,36 @@ export interface ProcessStep {
   input_summary?: string;
   output_summary?: string;
   status: string;
+  step_description?: string;
 }
 
 export interface ProcessTrace {
   steps: ProcessStep[];
   activated_modules: string[];
   total_duration_ms?: number;
+}
+
+// --- Near-Miss & Heatmap Types ---
+
+export interface NearMissSupplier {
+  supplier_id: string;
+  supplier_name: string;
+  restriction_reason: string;
+  condition_for_eligibility: string;
+  restriction_threshold?: number;
+}
+
+export interface HeatmapCell {
+  dimension: string;
+  score: number;
+  label: string;
+  detail?: string;
+}
+
+export interface SupplierHeatmapRow {
+  supplier_id: string;
+  supplier_name: string;
+  cells: HeatmapCell[];
 }
 
 // --- Discovery & Bundling Types ---

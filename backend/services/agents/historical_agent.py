@@ -7,6 +7,7 @@ import logging
 from typing import Any
 
 from backend.services.agents.base import BaseAgent
+from backend.config import SPECIALIST_MAX_TOKENS
 
 logger = logging.getLogger(__name__)
 
@@ -15,7 +16,8 @@ SYSTEM_PROMPT = (
     "Analyze past award patterns to identify which suppliers have performed well "
     "in similar categories and geographies. Use historical data to inform supplier "
     "rankings and suggest weight adjustments when history strongly favors or "
-    "disfavors certain factors."
+    "disfavors certain factors.\n\n"
+    "Be precise. Each rationale must cite 1-2 specific data points. No filler. Return compact JSON."
 )
 
 
@@ -23,7 +25,7 @@ class HistoricalAgent(BaseAgent):
     """Analyzes historical_awards.csv for same category/country patterns."""
 
     def __init__(self):
-        super().__init__("historical_precedent")
+        super().__init__("historical_precedent", max_tokens=SPECIALIST_MAX_TOKENS)
 
     async def analyze(self, context: dict) -> dict:
         """

@@ -7,6 +7,7 @@ import logging
 from typing import Any
 
 from backend.services.agents.base import BaseAgent
+from backend.config import SPECIALIST_MAX_TOKENS
 
 logger = logging.getLogger(__name__)
 
@@ -14,7 +15,8 @@ SYSTEM_PROMPT = (
     "You are a procurement strategic alignment specialist. "
     "Evaluate suppliers based on ESG performance, preferred supplier status, "
     "incumbent relationships, and overall strategic fit with organizational goals. "
-    "Consider long-term partnership value and category strategy alignment."
+    "Consider long-term partnership value and category strategy alignment.\n\n"
+    "Be precise. Each rationale must cite 1-2 specific data points. No filler. Return compact JSON."
 )
 
 
@@ -22,7 +24,7 @@ class StrategicAgent(BaseAgent):
     """Evaluates ESG alignment, preferred status, incumbent relationships, and strategic fit."""
 
     def __init__(self):
-        super().__init__("strategic_fit")
+        super().__init__("strategic_fit", max_tokens=SPECIALIST_MAX_TOKENS)
 
     async def analyze(self, context: dict) -> dict:
         """

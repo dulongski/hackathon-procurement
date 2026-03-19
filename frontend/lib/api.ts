@@ -4,6 +4,7 @@ import type {
   AnalysisResponse,
   StatsResponse,
   CustomRequestInput,
+  ProcessStep,
 } from "./types";
 
 // Hit backend directly to avoid Next.js proxy timeout on long-running analysis calls
@@ -55,4 +56,49 @@ export async function fetchStats(): Promise<StatsResponse> {
   const res = await fetch(`${API_BASE}/stats`);
   if (!res.ok) throw new Error(`Failed to fetch stats: ${res.statusText}`);
   return res.json();
+}
+
+export async function analyzeRequestStream(
+  id: string,
+  onStep: (step: ProcessStep) => void,
+): Promise<AnalysisResponse> {
+  const res = await fetch(`${API_BASE}/analyze/${id}/stream`, { method: "POST" });
+  if (!res.ok) throw new Error(`Failed to start streaming analysis: ${res.statusText}`);
+
+  const reader = res.body!.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  let finalResult: AnalysisResponse | null = null;
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+
+    buffer += decoder.decode(value, { stream: true });
+    const lines = buffer.split("\n");
+    buffer = lines.pop() || "";
+
+    for (const line of lines) {
+      if (!line.startsWith("data: ")) continue;
+      const payload = line.slice(6).trim();
+      if (!payload) continue;
+
+      try {
+        const parsed = JSON.parse(payload);
+        if (parsed.type === "complete") {
+          finalResult = parsed.result as AnalysisResponse;
+        } else if (parsed.type === "error") {
+          throw new Error(parsed.detail || "Analysis failed");
+        } else {
+          onStep(parsed as ProcessStep);
+        }
+      } catch (e) {
+        if (e instanceof Error && e.message.includes("Analysis failed")) throw e;
+        // Skip malformed events
+      }
+    }
+  }
+
+  if (!finalResult) throw new Error("Stream ended without final result");
+  return finalResult;
 }

@@ -59,13 +59,14 @@ logger = logging.getLogger(__name__)
 # Step helpers
 # ---------------------------------------------------------------------------
 
-def _step(step_id: str, name: str, step_type: str) -> ProcessStep:
+def _step(step_id: str, name: str, step_type: str, step_description: str | None = None) -> ProcessStep:
     return ProcessStep(
         step_id=step_id,
         step_name=name,
         step_type=step_type,
         started_at=datetime.now(timezone.utc).isoformat(),
         status="pending",
+        step_description=step_description,
     )
 
 
@@ -115,7 +116,8 @@ def build_constraint_snapshot(
     data: ProcurementData,
 ) -> tuple[ConstraintSnapshot, ProcessStep]:
     """Run all deterministic checks and package into a typed snapshot."""
-    step = _step("CS-001", "Build Deterministic Constraint Snapshot", "deterministic")
+    step = _step("CS-001", "Build Deterministic Constraint Snapshot", "deterministic",
+                 "Filtering suppliers by category, delivery country, contract status, and restrictions. Validating budget and lead times.")
 
     category_l1 = request.get("category_l1", "")
     category_l2 = request.get("category_l2", "")
@@ -124,7 +126,7 @@ def build_constraint_snapshot(
     delivery_country = delivery_countries[0] if delivery_countries else request.get("country", "")
 
     # Filter suppliers
-    eligible, excluded = filter_suppliers(request, data.suppliers, data.pricing, data.policies)
+    eligible, excluded, near_miss = filter_suppliers(request, data.suppliers, data.pricing, data.policies)
 
     # Get pricing
     pricing_info: list[Any] = []
@@ -158,6 +160,7 @@ def build_constraint_snapshot(
     snapshot = ConstraintSnapshot(
         eligible_suppliers=eligible,
         excluded_suppliers=excluded,
+        near_miss_suppliers=near_miss,
         pricing_info=pricing_info,
         validation_issues=validation_issues,
         policy_evaluation=policy_eval,
@@ -183,7 +186,8 @@ def build_activation_plan(
     snapshot: ConstraintSnapshot,
 ) -> tuple[ActivationPlan, ProcessStep]:
     """Decide which modules to activate based on constraint snapshot signals."""
-    step = _step("AP-001", "Build Module Activation Plan", "deterministic")
+    step = _step("AP-001", "Build Module Activation Plan", "deterministic",
+                 "Deciding which analysis modules to activate based on constraint signals.")
 
     modules: list[str] = []
     reasons: dict[str, str] = {}
@@ -191,9 +195,15 @@ def build_activation_plan(
 
     catalog_gap = getattr(snapshot, "_catalog_gap_raw", {})
     bundle_opp = getattr(snapshot, "_bundle_opportunity_raw", {})
+    is_whitespace = request.get("is_whitespace", False)
 
-    # catalog_evaluation: always activate if eligible suppliers exist
-    if len(snapshot.eligible_suppliers) > 0:
+    # whitespace_discovery: when category is not in taxonomy
+    if is_whitespace:
+        modules.append("whitespace_discovery")
+        reasons["whitespace_discovery"] = "Category not in taxonomy — unmet demand discovery required"
+
+    # catalog_evaluation: activate if eligible suppliers exist and NOT whitespace
+    if len(snapshot.eligible_suppliers) > 0 and not is_whitespace:
         modules.append("catalog_evaluation")
         reasons["catalog_evaluation"] = f"{len(snapshot.eligible_suppliers)} eligible suppliers found"
         specialists.extend(["historical_precedent", "risk_assessment", "value_for_money", "strategic_fit"])
@@ -264,7 +274,8 @@ async def run_critic(
     snapshot: ConstraintSnapshot,
 ) -> tuple[CriticOutput, ProcessStep]:
     """Run the Critic Agent."""
-    step = _step("GOV-001", "Critic Agent Review", "governance")
+    step = _step("GOV-001", "Critic Agent Review", "governance",
+                 "Critic reviewing specialist analyses for contradictions, weak evidence, and bias.")
 
     try:
         from backend.services.agents.critic_agent import CriticAgent
@@ -304,7 +315,8 @@ async def run_judge(
     snapshot: ConstraintSnapshot,
 ) -> tuple[JudgeDecision, ProcessStep]:
     """Run the Judge Agent."""
-    step = _step("GOV-002", "Judge Agent Adjudication", "governance")
+    step = _step("GOV-002", "Judge Agent Adjudication", "governance",
+                 "Judge resolving disagreements and producing final supplier ranking.")
 
     try:
         from backend.services.agents.judge_agent import JudgeAgent
@@ -367,7 +379,8 @@ async def run_reviewer(
     audit_trail: dict[str, Any],
 ) -> tuple[ReviewerVerdict, ProcessStep]:
     """Run the Reviewer Agent."""
-    step = _step("GOV-003", "Reviewer Agent Verification", "governance")
+    step = _step("GOV-003", "Reviewer Agent Verification", "governance",
+                 "Reviewer verifying audit-readiness and internal consistency.")
 
     try:
         from backend.services.agents.reviewer_agent import ReviewerAgent
@@ -409,18 +422,28 @@ async def run_reviewer(
 async def execute_orchestration(
     request: dict[str, Any],
     data: ProcurementData,
+    on_step: Any | None = None,
 ) -> OrchestrationResult:
-    """Universal orchestration — every request flows through this."""
+    """Universal orchestration — every request flows through this.
+
+    Args:
+        on_step: Optional async callback called with each completed ProcessStep.
+    """
     start_time = time.time()
     steps: list[ProcessStep] = []
 
+    async def _emit(step: ProcessStep) -> None:
+        steps.append(step)
+        if on_step is not None:
+            await on_step(step)
+
     # --- Phase A: Constraint Snapshot ---
     snapshot, cs_step = build_constraint_snapshot(request, data)
-    steps.append(cs_step)
+    await _emit(cs_step)
 
     # --- Phase A: Activation Plan ---
     plan, ap_step = build_activation_plan(request, snapshot)
-    steps.append(ap_step)
+    await _emit(ap_step)
 
     # --- Phase B: Run Activated Modules ---
     specialist_opinions: list[AgentOpinion] = []
@@ -429,7 +452,8 @@ async def execute_orchestration(
 
     # Catalog evaluation module
     if "catalog_evaluation" in plan.activated_modules:
-        mod_step = _step("MOD-CAT", "Catalog Evaluation Module", "agentic")
+        mod_step = _step("MOD-CAT", "Catalog Evaluation Module", "agentic",
+                         "Running 4 specialist agents in parallel: historical precedent, risk assessment, value-for-money, and strategic fit.")
         try:
             from backend.services.modules.catalog_module import run_catalog_module
             specialist_opinions = await run_catalog_module(
@@ -444,7 +468,7 @@ async def execute_orchestration(
         except Exception as e:
             logger.exception("Catalog module failed")
             _fail(mod_step, str(e))
-        steps.append(mod_step)
+        await _emit(mod_step)
 
     # Discovery module
     if "new_supplier_discovery" in plan.activated_modules:
@@ -459,7 +483,7 @@ async def execute_orchestration(
         except Exception as e:
             logger.exception("Discovery module failed")
             _fail(mod_step, str(e))
-        steps.append(mod_step)
+        await _emit(mod_step)
 
     # Bundling module
     if "bundling_optimization" in plan.activated_modules:
@@ -477,7 +501,7 @@ async def execute_orchestration(
         except Exception as e:
             logger.exception("Bundling module failed")
             _fail(mod_step, str(e))
-        steps.append(mod_step)
+        await _emit(mod_step)
 
     # Threshold module
     if "threshold_approval_review" in plan.activated_modules:
@@ -490,17 +514,17 @@ async def execute_orchestration(
             _complete(mod_step, f"conflict={threshold_review.get('policy_conflict')}")
         except Exception as e:
             _fail(mod_step, str(e))
-        steps.append(mod_step)
+        await _emit(mod_step)
 
     # --- Phase C: Governance Pass ---
 
     # Critic
     critic_output, critic_step = await run_critic(specialist_opinions, snapshot)
-    steps.append(critic_step)
+    await _emit(critic_step)
 
     # Judge (always runs)
     judge_decision, judge_step = await run_judge(specialist_opinions, critic_output, snapshot)
-    steps.append(judge_step)
+    await _emit(judge_step)
 
     # Build recommendation from judge decision
     has_blocking = any(e.get("blocking", False) for e in snapshot.escalations)
@@ -532,16 +556,17 @@ async def execute_orchestration(
     reviewer_verdict, reviewer_step = await run_reviewer(
         recommendation, judge_decision, snapshot.escalations, audit_trail,
     )
-    steps.append(reviewer_step)
+    await _emit(reviewer_step)
 
     # --- Feedback Loop ---
-    fl_step = _step("FL-001", "Feedback Learning Loop", "governance")
+    fl_step = _step("FL-001", "Feedback Learning Loop", "governance",
+                    "Writing governance learnings to memory for future decisions.")
     memory_entries = run_feedback_loop(
         critic_output, judge_decision, reviewer_verdict,
         request.get("request_id", "UNKNOWN"),
     )
     _complete(fl_step, f"{len(memory_entries)} memory entries written")
-    steps.append(fl_step)
+    await _emit(fl_step)
 
     # --- Build Process Trace ---
     total_ms = int((time.time() - start_time) * 1000)

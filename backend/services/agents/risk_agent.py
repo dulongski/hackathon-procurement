@@ -7,6 +7,7 @@ import logging
 from typing import Any
 
 from backend.services.agents.base import BaseAgent
+from backend.config import SPECIALIST_MAX_TOKENS
 
 logger = logging.getLogger(__name__)
 
@@ -14,7 +15,8 @@ SYSTEM_PROMPT = (
     "You are a procurement risk assessment specialist. "
     "Evaluate supplier risks including financial stability, delivery reliability, "
     "capacity constraints, concentration risk, and compliance factors. "
-    "Provide actionable risk assessments for each supplier."
+    "Provide actionable risk assessments for each supplier.\n\n"
+    "Be precise. Each rationale must cite 1-2 specific data points. No filler. Return compact JSON."
 )
 
 
@@ -22,7 +24,7 @@ class RiskAgent(BaseAgent):
     """Evaluates supplier risks based on risk scores, delivery, capacity, and restrictions."""
 
     def __init__(self):
-        super().__init__("risk_assessment")
+        super().__init__("risk_assessment", max_tokens=SPECIALIST_MAX_TOKENS)
 
     async def analyze(self, context: dict) -> dict:
         """

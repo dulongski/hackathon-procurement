@@ -280,6 +280,7 @@ class BundleOpportunitySignal(BaseModel):
 class ConstraintSnapshot(BaseModel):
     eligible_suppliers: list[dict[str, Any]] = Field(default_factory=list)
     excluded_suppliers: list[dict[str, Any]] = Field(default_factory=list)
+    near_miss_suppliers: list[dict[str, Any]] = Field(default_factory=list)
     pricing_info: list[Any] = Field(default_factory=list)
     validation_issues: list[dict[str, Any]] = Field(default_factory=list)
     policy_evaluation: dict[str, Any] = Field(default_factory=dict)
@@ -428,6 +429,7 @@ class ProcessStep(BaseModel):
     input_summary: Optional[str] = None
     output_summary: Optional[str] = None
     status: str = "pending"  # pending, completed, skipped, failed
+    step_description: Optional[str] = None
 
 class ProcessTrace(BaseModel):
     steps: list[ProcessStep] = Field(default_factory=list)

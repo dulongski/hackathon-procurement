@@ -7,6 +7,7 @@ import logging
 from typing import Any
 
 from backend.services.agents.base import BaseAgent
+from backend.config import GOVERNANCE_MAX_TOKENS
 
 logger = logging.getLogger(__name__)
 
@@ -21,6 +22,7 @@ SYSTEM_PROMPT = (
     "- Hidden SLA degradation: lead time or capacity risks being understated\n"
     "- Over-optimistic savings assumptions\n"
     "- Missing risk factors that should have been considered\n\n"
+    "Be concise. Return compact JSON. Keep descriptions brief.\n\n"
     "Return ONLY a JSON object with these keys:\n"
     "- findings: list of objects, each with:\n"
     "    - finding_id: string (CF-001, CF-002, etc.)\n"
@@ -40,7 +42,7 @@ class CriticAgent(BaseAgent):
     """Reviews specialist outputs for contradictions, weak evidence, and bias."""
 
     def __init__(self):
-        super().__init__("critic")
+        super().__init__("critic", max_tokens=GOVERNANCE_MAX_TOKENS)
 
     async def analyze(self, context: dict) -> dict:
         try:

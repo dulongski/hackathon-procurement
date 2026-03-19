@@ -2,6 +2,7 @@
 Supplier filtering and pricing service for procurement sourcing agent.
 """
 
+import re
 
 # Country-to-pricing-region mapping
 COUNTRY_TO_PRICING_REGION = {
@@ -33,7 +34,6 @@ def _is_restricted(supplier_id, category_l1, category_l2, delivery_countries,
 
         if "all" in scope:
             # Value-conditional restriction (e.g., SUP-0045 EUR 75K limit)
-            import re
             match = re.search(r'below\s+(?:EUR|CHF|USD)\s+([\d,.\s]+)', reason, re.IGNORECASE)
             if match:
                 val_str = match.group(1).replace(",", "").replace(" ", "")
@@ -69,8 +69,10 @@ def filter_suppliers(request, suppliers_data, pricing_data, policies):
         policies: dict loaded from policies.json
 
     Returns:
-        tuple of (eligible_list, excluded_list), each a list of dicts with supplier info
-        and inclusion/exclusion reason.
+        tuple of (eligible_list, excluded_list, near_miss_list).  eligible and excluded
+        are lists of dicts with supplier info and inclusion/exclusion reason.
+        near_miss contains suppliers that are excluded due to a value-conditional
+        restriction but could become eligible with exception approval.
     """
     category_l1 = request.get("category_l1")
     category_l2 = request.get("category_l2")
@@ -85,6 +87,7 @@ def filter_suppliers(request, suppliers_data, pricing_data, policies):
 
     eligible = []
     excluded = []
+    near_miss = []
 
     # Deduplicate supplier rows (a supplier may appear multiple times for
     # different categories, but we only care about the matching category row)
@@ -150,6 +153,26 @@ def filter_suppliers(request, suppliers_data, pricing_data, policies):
             )
             supplier_info["is_restricted"] = True
             excluded.append(supplier_info)
+
+            # Check if this is a value-conditional restriction (near miss)
+            value_match = re.search(
+                r'below\s+(EUR|CHF|USD)\s+([\d,.\s]+)',
+                restriction_reason or "",
+                re.IGNORECASE,
+            )
+            if value_match:
+                restr_currency = value_match.group(1).upper()
+                limit = float(value_match.group(2).replace(",", "").replace(" ", ""))
+                near_miss.append({
+                    "supplier_id": sup_id,
+                    "supplier_name": sup_name,
+                    "restriction_reason": restriction_reason,
+                    "condition_for_eligibility": (
+                        f"Requires exception approval for contracts above {restr_currency} {limit:,.0f}"
+                    ),
+                    "restriction_threshold": limit,
+                })
+
             continue
 
         # 4. Data residency check
@@ -165,7 +188,7 @@ def filter_suppliers(request, suppliers_data, pricing_data, policies):
         # Passed all filters
         eligible.append(supplier_info)
 
-    return eligible, excluded
+    return eligible, excluded, near_miss
 
 
 def get_pricing_for_supplier(supplier_id, category_l1, category_l2, country,

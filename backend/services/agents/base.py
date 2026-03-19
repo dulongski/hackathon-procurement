@@ -7,8 +7,14 @@ import logging
 import re
 
 import anthropic
+from httpx import Timeout
 
-from backend.config import ANTHROPIC_API_KEY, AGENT_MODEL
+from backend.config import (
+    ANTHROPIC_API_KEY,
+    AGENT_MODEL,
+    AGENT_MAX_TOKENS,
+    AGENT_TIMEOUT,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -16,11 +22,15 @@ logger = logging.getLogger(__name__)
 class BaseAgent:
     """Base class that all procurement analysis agents inherit from."""
 
-    def __init__(self, name: str):
+    def __init__(self, name: str, max_tokens: int | None = None):
         self.name = name
         api_key = ANTHROPIC_API_KEY or "missing"
-        self.client = anthropic.Anthropic(api_key=api_key)
+        self.client = anthropic.Anthropic(
+            api_key=api_key,
+            timeout=Timeout(AGENT_TIMEOUT, connect=10.0),
+        )
         self.model = AGENT_MODEL
+        self.max_tokens = max_tokens or AGENT_MAX_TOKENS
 
     async def analyze(self, context: dict) -> dict:
         raise NotImplementedError
@@ -52,11 +62,11 @@ class BaseAgent:
         finally:
             loop.close()
 
-    def _call_claude(self, system_prompt: str, user_prompt: str) -> str:
+    def _call_claude(self, system_prompt: str, user_prompt: str, max_tokens: int | None = None) -> str:
         """Make a synchronous call to Claude and return the text response."""
         response = self.client.messages.create(
             model=self.model,
-            max_tokens=2000,
+            max_tokens=max_tokens or self.max_tokens,
             system=system_prompt,
             messages=[{"role": "user", "content": user_prompt}],
         )

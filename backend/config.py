@@ -30,6 +30,13 @@ AGENT_MODEL = "claude-sonnet-4-6"
 AGENT_MAX_TOKENS = 4096
 AGENT_TEMPERATURE = 0.0
 
+# Per-role token limits
+SPECIALIST_MAX_TOKENS = 1500
+GOVERNANCE_MAX_TOKENS = 2000
+
+# Timeout for agent API calls (seconds)
+AGENT_TIMEOUT = 45
+
 # ---------------------------------------------------------------------------
 # Country-to-region mapping
 # ---------------------------------------------------------------------------

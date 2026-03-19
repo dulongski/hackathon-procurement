@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from "react";
 import { useParams, useRouter } from "next/navigation";
-import { fetchRequest, analyzeRequest } from "@/lib/api";
+import { fetchRequest, analyzeRequest, analyzeRequestStream } from "@/lib/api";
 import type {
   ProcurementRequest,
   AnalysisResponse,
@@ -15,6 +15,9 @@ import type {
   ReviewerVerdict,
   ProcessStep,
   GovernanceOutput,
+  NearMissSupplier,
+  SupplierHeatmapRow,
+  HeatmapCell,
 } from "@/lib/types";
 
 // ---------------------------------------------------------------------------
@@ -76,6 +79,7 @@ const TABS = [
   { id: "process", label: "Process Trace" },
   { id: "agents", label: "Agent Logic" },
   { id: "governance", label: "Governance" },
+  { id: "comparison", label: "Comparison" },
   { id: "audit", label: "Audit Trail" },
 ] as const;
 
@@ -93,6 +97,7 @@ export default function RequestAnalysisPage() {
   const [analysis, setAnalysis] = useState<AnalysisResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [analyzing, setAnalyzing] = useState(false);
+  const [liveSteps, setLiveSteps] = useState<ProcessStep[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<TabId>("recommendation");
 
@@ -115,9 +120,16 @@ export default function RequestAnalysisPage() {
           quantity: interp?.quantity ?? undefined,
         });
         setLoading(false);
-        sessionStorage.removeItem(`analysis_${requestId}`);
+        // Don't remove cache here — React strict mode double-runs effects.
+        // Remove after a short delay so the second run still finds it.
+        setTimeout(() => sessionStorage.removeItem(`analysis_${requestId}`), 500);
         return;
       } catch { /* fall through */ }
+    }
+    // Only fetch from API for non-custom requests (custom ones won't exist in the DB)
+    if (requestId.startsWith("CUSTOM-")) {
+      setLoading(false);
+      return;
     }
     fetchRequest(requestId)
       .then(setRequest)
@@ -128,13 +140,23 @@ export default function RequestAnalysisPage() {
   const handleAnalyze = async () => {
     setAnalyzing(true);
     setError(null);
+    setLiveSteps([]);
     try {
-      const result = await analyzeRequest(requestId);
+      const result = await analyzeRequestStream(requestId, (step) => {
+        setLiveSteps((prev) => [...prev, step]);
+      });
       setAnalysis(result);
     } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : "Analysis failed");
+      // Fallback to non-streaming if SSE fails
+      try {
+        const result = await analyzeRequest(requestId);
+        setAnalysis(result);
+      } catch (fallbackErr: unknown) {
+        setError(fallbackErr instanceof Error ? fallbackErr.message : "Analysis failed");
+      }
     } finally {
       setAnalyzing(false);
+      setLiveSteps([]);
     }
   };
 
@@ -154,7 +176,13 @@ export default function RequestAnalysisPage() {
       <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6 mb-6">
         <div className="flex items-start justify-between">
           <div>
-            <h1 className="text-xl font-bold text-gray-900">{request.title || "Untitled Request"}</h1>
+            <h1 className="text-xl font-bold text-gray-900">{request.title || "Untitled Request"}
+              {analysis?.request_interpretation?.is_whitespace && (
+                <span className="ml-3 px-3 py-1 rounded-full text-xs font-bold bg-orange-100 text-orange-700 border border-orange-200">
+                  WHITESPACE — No matching category
+                </span>
+              )}
+            </h1>
             <p className="text-gray-500 text-sm mt-1 font-mono">{requestId}</p>
           </div>
           {!analysis && (
@@ -165,9 +193,21 @@ export default function RequestAnalysisPage() {
         </div>
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mt-5 pt-5 border-t border-gray-100">
           <DetailItem label="Category" value={`${request.category_l1 || "-"} / ${request.category_l2 || "-"}`} />
-          <DetailItem label="Country" value={request.country || "-"} />
-          <DetailItem label="Budget" value={request.budget_amount != null ? `${Number(request.budget_amount).toLocaleString()} ${request.currency || "EUR"}` : "-"} />
-          <DetailItem label="Quantity" value={request.quantity != null ? `${Number(request.quantity).toLocaleString()} ${request.unit_of_measure || "units"}` : "-"} />
+          <DetailItem label="Country" value={(() => {
+            const countries = analysis?.request_interpretation?.delivery_countries;
+            if (countries && countries.length > 1) return countries.join(", ");
+            return request.country || "-";
+          })()} />
+          <DetailItem label="Budget" value={(() => {
+            const interp = analysis?.request_interpretation;
+            if (interp?.budget_min && interp?.budget_max) {
+              return `${Number(interp.budget_min).toLocaleString()} – ${Number(interp.budget_max).toLocaleString()} ${interp?.currency || "EUR"}`;
+            }
+            return request.budget_amount != null ? `${Number(request.budget_amount).toLocaleString()} ${request.currency || "EUR"}` : "-";
+          })()} />
+          <DetailItem label="Quantity" value={request.quantity != null
+            ? `${Number(request.quantity).toLocaleString()} ${request.unit_of_measure || "units"}${analysis?.request_interpretation?.quantity_inferred ? " (inferred)" : ""}`
+            : "-"} />
         </div>
         {request.scenario_tags && request.scenario_tags.length > 0 && (
           <div className="flex flex-wrap gap-1.5 mt-4">
@@ -181,27 +221,70 @@ export default function RequestAnalysisPage() {
       </div>
 
       {error && <div className="mb-6 p-4 bg-red-50 border border-red-200 rounded-xl text-red-700 text-sm">{error}</div>}
-      {analyzing && <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-12 flex flex-col items-center justify-center gap-4"><div className="w-12 h-12 border-3 border-indigo-200 border-t-indigo-600 rounded-full animate-spin" style={{ borderWidth: 3 }} /><p className="text-gray-600 font-medium">Running universal orchestration pipeline...</p><p className="text-gray-400 text-sm">Supervisor → Specialists → Critic → Judge → Reviewer</p></div>}
+      {analyzing && (
+        <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6 mb-6">
+          <div className="flex items-center gap-3 mb-4">
+            <div className="w-5 h-5 border-2 border-indigo-200 border-t-indigo-600 rounded-full animate-spin" style={{ borderWidth: 2 }} />
+            <p className="text-gray-700 font-medium">Running orchestration pipeline...</p>
+          </div>
+          {liveSteps.length > 0 ? (
+            <div className="space-y-2">
+              {liveSteps.map((step) => {
+                const typeColor = STEP_TYPE_COLORS[step.step_type] || { bg: "bg-gray-100", text: "text-gray-700" };
+                return (
+                  <div key={step.step_id} className="flex items-center gap-3 p-3 bg-gray-50 rounded-lg border border-gray-100 animate-fade-in">
+                    <span className={`w-2 h-2 rounded-full flex-shrink-0 ${step.status === "completed" ? "bg-green-500" : step.status === "failed" ? "bg-red-500" : "bg-amber-500"}`} />
+                    <span className={`px-2 py-0.5 rounded text-xs font-medium ${typeColor.bg} ${typeColor.text}`}>{step.step_type}</span>
+                    <span className="text-sm font-medium text-gray-800">{step.step_name}</span>
+                    {step.step_description && <p className="text-xs text-gray-400 italic ml-auto max-w-[400px] truncate">{step.step_description}</p>}
+                    {step.duration_ms != null && <span className="text-xs text-gray-400 ml-auto">{(step.duration_ms / 1000).toFixed(1)}s</span>}
+                    {step.output_summary && <span className="text-xs text-gray-500 ml-2 truncate max-w-[300px]">{step.output_summary}</span>}
+                  </div>
+                );
+              })}
+              <div className="flex items-center gap-3 p-3 bg-gray-50 rounded-lg border border-gray-100 border-dashed">
+                <span className="w-2 h-2 rounded-full bg-indigo-400 animate-pulse flex-shrink-0" />
+                <span className="text-sm text-gray-400">Next step running...</span>
+              </div>
+            </div>
+          ) : (
+            <p className="text-gray-400 text-sm">Initializing pipeline...</p>
+          )}
+        </div>
+      )}
 
       {analysis && !analyzing && (
         <div className="animate-fade-in">
-          <div className="flex gap-1 mb-6 bg-white rounded-xl shadow-sm border border-gray-200 p-1.5 overflow-x-auto">
-            {TABS.map((tab) => (
-              <button key={tab.id} onClick={() => setActiveTab(tab.id)} className={`px-4 py-2.5 rounded-lg text-sm font-medium whitespace-nowrap transition-colors ${activeTab === tab.id ? "bg-indigo-600 text-white shadow-sm" : "text-gray-600 hover:text-gray-900 hover:bg-gray-50"}`}>
-                {tab.label}
-                {tab.id === "governance" && analysis.governance?.critic_findings && analysis.governance.critic_findings.length > 0 && (
-                  <span className="ml-1.5 inline-flex items-center justify-center w-5 h-5 rounded-full bg-purple-500 text-white text-xs">{analysis.governance.critic_findings.length}</span>
-                )}
-              </button>
-            ))}
-          </div>
-          <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
-            {activeTab === "recommendation" && <RecommendationTab analysis={analysis} />}
-            {activeTab === "process" && <ProcessTraceTab analysis={analysis} />}
-            {activeTab === "agents" && <AgentLogicTab analysis={analysis} />}
-            {activeTab === "governance" && <GovernanceTab analysis={analysis} />}
-            {activeTab === "audit" && <AuditTrailTab analysis={analysis} />}
-          </div>
+          {analysis.is_rejected ? (
+            <div className="bg-red-50 border border-red-200 rounded-xl p-8 text-center">
+              <div className="w-12 h-12 rounded-full bg-red-100 flex items-center justify-center mx-auto mb-4">
+                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#ef4444" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg>
+              </div>
+              <h3 className="text-lg font-bold text-red-800 mb-2">Request Rejected</h3>
+              <p className="text-red-700">{analysis.rejection_message}</p>
+            </div>
+          ) : (
+            <>
+              <div className="flex gap-1 mb-6 bg-white rounded-xl shadow-sm border border-gray-200 p-1.5 overflow-x-auto">
+                {TABS.map((tab) => (
+                  <button key={tab.id} onClick={() => setActiveTab(tab.id)} className={`px-4 py-2.5 rounded-lg text-sm font-medium whitespace-nowrap transition-colors ${activeTab === tab.id ? "bg-indigo-600 text-white shadow-sm" : "text-gray-600 hover:text-gray-900 hover:bg-gray-50"}`}>
+                    {tab.label}
+                    {tab.id === "governance" && analysis.governance?.critic_findings && analysis.governance.critic_findings.length > 0 && (
+                      <span className="ml-1.5 inline-flex items-center justify-center w-5 h-5 rounded-full bg-purple-500 text-white text-xs">{analysis.governance.critic_findings.length}</span>
+                    )}
+                  </button>
+                ))}
+              </div>
+              <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
+                {activeTab === "recommendation" && <RecommendationTab analysis={analysis} />}
+                {activeTab === "process" && <ProcessTraceTab analysis={analysis} />}
+                {activeTab === "agents" && <AgentLogicTab analysis={analysis} />}
+                {activeTab === "governance" && <GovernanceTab analysis={analysis} />}
+                {activeTab === "comparison" && <ComparisonTab analysis={analysis} />}
+                {activeTab === "audit" && <AuditTrailTab analysis={analysis} />}
+              </div>
+            </>
+          )}
         </div>
       )}
     </div>
@@ -342,6 +425,26 @@ function RecommendationTab({ analysis }: { analysis: AnalysisResponse }) {
           </div>
         </div>
       )}
+
+      {/* Near-Miss Suppliers */}
+      {analysis.near_miss_suppliers && analysis.near_miss_suppliers.length > 0 && (
+        <div>
+          <h4 className="text-sm font-semibold text-gray-700 mb-3">Near-Miss Suppliers</h4>
+          <div className="space-y-2">
+            {analysis.near_miss_suppliers.map((nm) => (
+              <div key={nm.supplier_id} className="p-4 rounded-lg border bg-amber-50 border-amber-200">
+                <div className="flex items-center gap-2 mb-1">
+                  <span className="w-2 h-2 rounded-full bg-amber-500" />
+                  <span className="text-sm font-medium text-amber-900">{nm.supplier_name}</span>
+                  <span className="text-xs text-amber-600 font-mono">({nm.supplier_id})</span>
+                </div>
+                <p className="text-sm text-amber-800">{nm.restriction_reason}</p>
+                <p className="text-sm text-amber-700 mt-1 font-medium">{nm.condition_for_eligibility}</p>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -394,6 +497,7 @@ function ProcessTraceTab({ analysis }: { analysis: AnalysisResponse }) {
                 </div>
               </div>
               {step.output_summary && <p className="text-sm text-gray-600 mt-1">{step.output_summary}</p>}
+              {step.step_description && <p className="text-xs text-gray-400 italic mt-1">{step.step_description}</p>}
             </div>
           );
         })}
@@ -736,6 +840,76 @@ function AuditTrailTab({ analysis }: { analysis: AnalysisResponse }) {
           </div>
         </div>
       )}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Tab 6: Comparison (Heatmap)
+// ---------------------------------------------------------------------------
+function ComparisonTab({ analysis }: { analysis: AnalysisResponse }) {
+  const heatmap = analysis.supplier_heatmap;
+  if (!heatmap || heatmap.length === 0) return <p className="text-gray-500 text-sm">No comparison data available.</p>;
+
+  const dimensions = heatmap[0]?.cells.map(c => c.dimension) || [];
+
+  function cellColor(score: number) {
+    if (score >= 70) return "bg-green-100 text-green-800";
+    if (score >= 40) return "bg-amber-100 text-amber-800";
+    return "bg-red-100 text-red-800";
+  }
+
+  function dimensionLabel(dim: string) {
+    const labels: Record<string, string> = {
+      policy_compliance: "Policy",
+      price: "Price",
+      lead_time: "Lead Time",
+      geography: "Geography",
+      esg: "ESG",
+      quality_risk: "Quality/Risk",
+    };
+    return labels[dim] || dim.replace(/_/g, " ");
+  }
+
+  return (
+    <div className="overflow-x-auto">
+      <table className="w-full">
+        <thead>
+          <tr className="border-b border-gray-200">
+            <th className="px-3 py-3 text-left text-xs font-semibold text-gray-500 uppercase">Supplier</th>
+            {dimensions.map(dim => (
+              <th key={dim} className="px-3 py-3 text-center text-xs font-semibold text-gray-500 uppercase">{dimensionLabel(dim)}</th>
+            ))}
+          </tr>
+        </thead>
+        <tbody className="divide-y divide-gray-100">
+          {heatmap.map((row) => (
+            <tr key={row.supplier_id}>
+              <td className="px-3 py-3">
+                <p className="text-sm font-medium text-gray-900">{row.supplier_name}</p>
+                <p className="text-xs text-gray-400 font-mono">{row.supplier_id}</p>
+              </td>
+              {row.cells.map((cell) => (
+                <td key={cell.dimension} className="px-3 py-3 text-center">
+                  <div className="group relative inline-block">
+                    <span className={`inline-flex items-center justify-center w-10 h-10 rounded-lg text-xs font-bold ${cellColor(cell.score)}`}>
+                      {cell.score}
+                    </span>
+                    <span className={`block text-xs mt-0.5 ${cell.label === "Good" ? "text-green-600" : cell.label === "Fair" ? "text-amber-600" : "text-red-600"}`}>
+                      {cell.label}
+                    </span>
+                    {cell.detail && (
+                      <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 px-3 py-1.5 bg-gray-900 text-white text-xs rounded-lg opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap pointer-events-none z-10">
+                        {cell.detail}
+                      </div>
+                    )}
+                  </div>
+                </td>
+              ))}
+            </tr>
+          ))}
+        </tbody>
+      </table>
     </div>
   );
 }

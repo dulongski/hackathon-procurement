@@ -292,6 +292,56 @@ def check_escalations(request, validation_issues, policy_eval, eligible_supplier
                         "source": "deterministic",
                     })
 
+    # --- ER-011: Whitespace — category not in taxonomy ---
+    is_whitespace = request.get("is_whitespace", False)
+    if is_whitespace or (request.get("category_l1") is None and request.get("category_l2") is None):
+        esc_counter += 1
+        escalations.append({
+            "escalation_id": f"ESC-{esc_counter:03d}",
+            "rule": "ER-011",
+            "trigger": (
+                "Category not in taxonomy — unmet demand (whitespace). "
+                "No valid category match found for this procurement request."
+            ),
+            "escalate_to": "Category Manager / Discovery",
+            "blocking": True,
+            "source": "deterministic",
+        })
+
+    # --- ER-012: Only expedited delivery meets required-by date ---
+    if eligible_suppliers and required_by and pricing_info and not lead_time_infeasible_all and not no_supplier:
+        required_date = _parse_date(required_by)
+        created_date = _parse_date(request.get("created_at")) if request.get("created_at") else date.today()
+        if created_date is None:
+            created_date = date.today()
+        if required_date:
+            days_available = (required_date - created_date).days
+            if days_available > 0:
+                any_standard_meets = False
+                any_expedited_meets = False
+                for pi in pricing_info:
+                    if pi is None:
+                        continue
+                    std_lt = pi.get("standard_lead_time_days")
+                    exp_lt = pi.get("expedited_lead_time_days")
+                    if std_lt is not None and std_lt <= days_available:
+                        any_standard_meets = True
+                    if exp_lt is not None and exp_lt <= days_available:
+                        any_expedited_meets = True
+                if any_expedited_meets and not any_standard_meets:
+                    esc_counter += 1
+                    escalations.append({
+                        "escalation_id": f"ESC-{esc_counter:03d}",
+                        "rule": "ER-012",
+                        "trigger": (
+                            "Only expedited delivery can meet the required-by date. "
+                            "No supplier's standard lead time is sufficient within the available window."
+                        ),
+                        "escalate_to": "Procurement Manager",
+                        "blocking": False,
+                        "source": "deterministic",
+                    })
+
     # --- ER-009: Bundle capacity exceeded (triggered by bundling module) ---
     # This is a placeholder — the actual trigger comes from the bundling module
     # which injects this escalation when bundled demand exceeds all suppliers' capacity.

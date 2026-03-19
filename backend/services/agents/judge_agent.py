@@ -7,6 +7,7 @@ import logging
 from typing import Any
 
 from backend.services.agents.base import BaseAgent
+from backend.config import AGENT_MAX_TOKENS
 
 logger = logging.getLogger(__name__)
 
@@ -23,6 +24,8 @@ SYSTEM_PROMPT = (
     "- If a supplier is policy-restricted, they cannot be ranked #1\n"
     "- If budget is insufficient at all suppliers, status must be 'cannot_proceed'\n"
     "- If all lead times are infeasible, flag this prominently\n\n"
+    "Each justification MUST explain the composite_score — which factors drove it up/down. "
+    "Cite specific data points (scores, prices, lead times). 2-3 sentences max. Return compact JSON.\n\n"
     "Return ONLY a JSON object with these keys:\n"
     "- final_ranking: list of objects, each with:\n"
     "    - supplier_id: string\n"
@@ -46,7 +49,7 @@ class JudgeAgent(BaseAgent):
     """Final adjudicator — resolves disagreements and produces definitive ranking."""
 
     def __init__(self):
-        super().__init__("judge")
+        super().__init__("judge", max_tokens=AGENT_MAX_TOKENS)
 
     async def analyze(self, context: dict) -> dict:
         try:
@@ -72,11 +75,39 @@ class JudgeAgent(BaseAgent):
             )
 
             raw = self._call_claude(SYSTEM_PROMPT, prompt)
-            return self._parse_json_response(raw)
+            logger.debug("JudgeAgent raw response length: %d chars", len(raw))
+            try:
+                return self._parse_json_response(raw)
+            except (json.JSONDecodeError, ValueError) as parse_err:
+                logger.warning("Judge JSON parse failed, attempting partial extraction: %s", parse_err)
+                return self._extract_partial_json(raw, context)
 
         except Exception:
             logger.exception("JudgeAgent failed, returning fallback")
             return self._fallback(context)
+
+    @staticmethod
+    def _extract_partial_json(raw: str, context: dict) -> dict:
+        """Try to extract partial JSON from a truncated or malformed response."""
+        import re
+        # Try to find the final_ranking array at minimum
+        match = re.search(r'"final_ranking"\s*:\s*\[.*?\]', raw, re.DOTALL)
+        if match:
+            try:
+                partial = "{" + match.group(0) + "}"
+                data = json.loads(partial)
+                # Fill in missing keys with defaults
+                data.setdefault("disagreements_resolved", [])
+                data.setdefault("bias_checks", ["Partial parse — some checks may be missing"])
+                data.setdefault("confidence_assessment", 0.5)
+                data.setdefault("confidence_explanation", "Partial response recovered from truncated output.")
+                data.setdefault("weight_rationale", "Partial recovery — see ranking justifications.")
+                logger.info("Judge partial JSON recovery succeeded with %d ranked suppliers", len(data.get("final_ranking", [])))
+                return data
+            except (json.JSONDecodeError, ValueError):
+                pass
+        logger.warning("Judge partial JSON recovery failed, using fallback")
+        return JudgeAgent._fallback(context)
 
     @staticmethod
     def _fallback(context: dict) -> dict:

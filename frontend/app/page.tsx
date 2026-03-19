@@ -58,10 +58,6 @@ export default function DashboardPage() {
   // Custom request panel
   const [showCustom, setShowCustom] = useState(false);
   const [customText, setCustomText] = useState("");
-  const [customCategory, setCustomCategory] = useState("");
-  const [customCountry, setCustomCountry] = useState("");
-  const [customBudget, setCustomBudget] = useState("");
-  const [customQuantity, setCustomQuantity] = useState("");
   const [customSubmitting, setCustomSubmitting] = useState(false);
 
   // Load stats
@@ -112,10 +108,6 @@ export default function DashboardPage() {
     try {
       const result = await analyzeCustom({
         request_text: customText,
-        category_l1: customCategory || undefined,
-        country: customCountry || undefined,
-        budget_amount: customBudget ? parseFloat(customBudget) : undefined,
-        quantity: customQuantity ? parseFloat(customQuantity) : undefined,
       });
       // Cache analysis result for the request page to pick up
       sessionStorage.setItem(`analysis_${result.request_id}`, JSON.stringify(result));
@@ -196,34 +188,7 @@ export default function DashboardPage() {
               placeholder="e.g. We need 500 units of industrial safety gloves for our Berlin warehouse, budget around 15,000 EUR..."
               className="w-full h-28 px-4 py-3 border border-gray-200 rounded-lg text-sm text-gray-900 placeholder:text-gray-400 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent resize-none"
             />
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mt-3">
-              <input
-                value={customCategory}
-                onChange={(e) => setCustomCategory(e.target.value)}
-                placeholder="Category (e.g. IT)"
-                className="px-3 py-2 border border-gray-200 rounded-lg text-sm text-gray-900 placeholder:text-gray-400 focus:outline-none focus:ring-2 focus:ring-indigo-500"
-              />
-              <input
-                value={customCountry}
-                onChange={(e) => setCustomCountry(e.target.value)}
-                placeholder="Country (e.g. DE)"
-                className="px-3 py-2 border border-gray-200 rounded-lg text-sm text-gray-900 placeholder:text-gray-400 focus:outline-none focus:ring-2 focus:ring-indigo-500"
-              />
-              <input
-                value={customBudget}
-                onChange={(e) => setCustomBudget(e.target.value)}
-                placeholder="Budget (EUR)"
-                type="number"
-                className="px-3 py-2 border border-gray-200 rounded-lg text-sm text-gray-900 placeholder:text-gray-400 focus:outline-none focus:ring-2 focus:ring-indigo-500"
-              />
-              <input
-                value={customQuantity}
-                onChange={(e) => setCustomQuantity(e.target.value)}
-                placeholder="Quantity"
-                type="number"
-                className="px-3 py-2 border border-gray-200 rounded-lg text-sm text-gray-900 placeholder:text-gray-400 focus:outline-none focus:ring-2 focus:ring-indigo-500"
-              />
-            </div>
+            <p className="text-xs text-gray-400 mt-2">Include details like category, country, budget, quantity, and timeline. The AI will extract everything from your text.</p>
             <div className="mt-4 flex justify-end">
               <button
                 onClick={handleCustomSubmit}

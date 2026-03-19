@@ -1,21 +1,22 @@
+import asyncio
+import json
+import logging
+
 from fastapi import APIRouter, HTTPException
-from backend.services.pipeline import analyze_request, analyze_custom
+from fastapi.responses import StreamingResponse
+from backend.services.pipeline import analyze_request, analyze_custom, _run_pipeline
+from backend.services.extractor import extract_requirements
+from backend.data_loader import get_data
 from pydantic import BaseModel
 from typing import Optional, List
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api", tags=["analysis"])
 
 
 class CustomRequestBody(BaseModel):
     request_text: str
-    category_l1: Optional[str] = None
-    category_l2: Optional[str] = None
-    country: Optional[str] = None
-    budget_amount: Optional[float] = None
-    currency: Optional[str] = None
-    quantity: Optional[float] = None
-    delivery_countries: Optional[List[str]] = None
-    required_by_date: Optional[str] = None
 
 
 # Register the custom endpoint BEFORE the {request_id} endpoint
@@ -23,16 +24,99 @@ class CustomRequestBody(BaseModel):
 @router.post("/analyze/custom")
 async def analyze_custom_request(body: CustomRequestBody):
     """Analyze a free-text custom request."""
-    optional_fields = {
-        k: v
-        for k, v in body.model_dump().items()
-        if v is not None and k != "request_text"
-    }
     try:
-        result = await analyze_custom(body.request_text, optional_fields)
+        result = await analyze_custom(body.request_text)
         return result
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/analyze/{request_id}/stream")
+async def analyze_stream(request_id: str):
+    """SSE streaming endpoint — emits progress steps then final result."""
+    data = get_data()
+
+    # Load request
+    request = data.requests_by_id.get(request_id)
+    if not request:
+        raise HTTPException(status_code=404, detail=f"Request {request_id} not found")
+
+    # Run extractor
+    try:
+        extracted = extract_requirements(
+            request.get("request_text", ""),
+            optional_fields={k: v for k, v in request.items() if v is not None},
+        )
+        for key, value in extracted.items():
+            if request.get(key) is None and value is not None:
+                request[key] = value
+    except Exception:
+        logger.warning("Extractor failed for %s; proceeding with raw request", request_id)
+
+    # Check for rejection after extraction
+    if request.get("is_rejected"):
+        from datetime import datetime
+        rejection_response = {
+            "request_id": request_id,
+            "processed_at": datetime.utcnow().isoformat() + "Z",
+            "is_rejected": True,
+            "rejection_message": request.get("rejection_message", "Request cannot be processed."),
+            "supplier_shortlist": [],
+            "suppliers_excluded": [],
+            "escalations": [],
+            "agent_opinions": [],
+        }
+
+        async def rejection_generator():
+            yield f"data: {json.dumps({'type': 'complete', 'result': rejection_response})}\n\n"
+
+        return StreamingResponse(
+            rejection_generator(),
+            media_type="text/event-stream",
+            headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+        )
+
+    step_queue: asyncio.Queue = asyncio.Queue()
+
+    async def on_step(step):
+        await step_queue.put(step)
+
+    async def event_generator():
+        # Start pipeline in background task
+        pipeline_task = asyncio.create_task(
+            _run_pipeline(request, data, on_step=on_step)
+        )
+
+        # Emit step events as they arrive
+        while not pipeline_task.done():
+            try:
+                step = await asyncio.wait_for(step_queue.get(), timeout=1.0)
+                step_data = step.model_dump() if hasattr(step, "model_dump") else step
+                yield f"data: {json.dumps(step_data)}\n\n"
+            except asyncio.TimeoutError:
+                continue
+
+        # Drain any remaining steps
+        while not step_queue.empty():
+            step = step_queue.get_nowait()
+            step_data = step.model_dump() if hasattr(step, "model_dump") else step
+            yield f"data: {json.dumps(step_data)}\n\n"
+
+        # Get result or error
+        try:
+            result = await pipeline_task
+            yield f"data: {json.dumps({'type': 'complete', 'result': result})}\n\n"
+        except Exception as e:
+            yield f"data: {json.dumps({'type': 'error', 'detail': str(e)})}\n\n"
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+        },
+    )
 
 
 @router.post("/analyze/{request_id}")

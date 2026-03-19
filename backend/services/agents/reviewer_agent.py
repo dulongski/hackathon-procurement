@@ -7,6 +7,7 @@ import logging
 from typing import Any
 
 from backend.services.agents.base import BaseAgent
+from backend.config import GOVERNANCE_MAX_TOKENS
 
 logger = logging.getLogger(__name__)
 
@@ -19,6 +20,7 @@ SYSTEM_PROMPT = (
     "4. Uncertainty is visible (confidence scores make sense, risks are flagged)\n\n"
     "You review the FINAL package only. If you find issues, flag them — do not fix them.\n"
     "If issues are severe enough, recommend a targeted re-run of specific agents.\n\n"
+    "Be concise. Return compact JSON. Keep descriptions brief.\n\n"
     "Return ONLY a JSON object with these keys:\n"
     "- audit_ready: boolean\n"
     "- issues: list of objects, each with:\n"
@@ -35,7 +37,7 @@ class ReviewerAgent(BaseAgent):
     """Verifies consistency, evidence quality, and audit-readiness of final output."""
 
     def __init__(self):
-        super().__init__("reviewer")
+        super().__init__("reviewer", max_tokens=GOVERNANCE_MAX_TOKENS)
 
     async def analyze(self, context: dict) -> dict:
         try:

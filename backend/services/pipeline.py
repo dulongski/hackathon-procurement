@@ -52,17 +52,20 @@ def _days_until(target_date_str: str | None, from_date_str: str | None = None) -
 def _build_request_interpretation(request: dict) -> dict:
     """Build the request_interpretation sub-dict for the response."""
     return {
-        "category_l1": request.get("category_l1", ""),
-        "category_l2": request.get("category_l2", ""),
+        "category_l1": request.get("category_l1") or "",
+        "category_l2": request.get("category_l2") or "",
         "quantity": request.get("quantity"),
         "unit_of_measure": request.get("unit_of_measure"),
         "budget_amount": request.get("budget_amount"),
+        "budget_min": request.get("budget_min"),
+        "budget_max": request.get("budget_max"),
         "currency": request.get("currency", "EUR"),
         "delivery_country": (
             request.get("delivery_countries", [None])[0]
             if request.get("delivery_countries")
             else request.get("country")
         ),
+        "delivery_countries": request.get("delivery_countries", []),
         "required_by_date": request.get("required_by_date"),
         "days_until_required": _days_until(
             request.get("required_by_date"),
@@ -73,6 +76,11 @@ def _build_request_interpretation(request: dict) -> dict:
         "preferred_supplier_stated": request.get("preferred_supplier_mentioned"),
         "incumbent_supplier": request.get("incumbent_supplier"),
         "requester_instruction": request.get("request_text"),
+        "quantity_inferred": request.get("quantity_inferred", False),
+        "quantity_confidence": request.get("quantity_confidence"),
+        "category_confidence": request.get("category_confidence"),
+        "is_whitespace": request.get("is_whitespace", False),
+        "urgency_level": request.get("urgency_level"),
     }
 
 
@@ -130,6 +138,113 @@ def _build_policy_evaluation_dict(policy_eval: dict) -> dict:
         "category_rules_applied": policy_eval.get("category_rules", []),
         "geography_rules_applied": policy_eval.get("geography_rules", []),
     }
+
+
+def _build_heatmap(shortlist: list[dict], request: dict, snapshot: Any) -> list[dict]:
+    """Build a comparison heatmap grid: suppliers x dimensions."""
+    if not shortlist:
+        return []
+
+    # Collect values for normalization
+    prices = [s.get("unit_price_eur", 0) or 0 for s in shortlist]
+    min_price = min(prices) if prices else 0
+    max_price = max(prices) if prices else 1
+
+    required_by = request.get("required_by_date")
+    delivery_countries = request.get("delivery_countries", [])
+
+    heatmap = []
+    for sup in shortlist:
+        cells = []
+
+        # 1. Policy compliance
+        compliant = sup.get("policy_compliant", True)
+        cells.append({
+            "dimension": "policy_compliance",
+            "score": 100 if compliant else 0,
+            "label": "Good" if compliant else "Poor",
+            "detail": "Fully compliant with all policies" if compliant else "Policy violation detected",
+        })
+
+        # 2. Price (cheapest=100, most expensive=0)
+        price = sup.get("unit_price_eur", 0) or 0
+        if max_price > min_price:
+            price_score = round(100 * (1 - (price - min_price) / (max_price - min_price)))
+        else:
+            price_score = 100
+        cells.append({
+            "dimension": "price",
+            "score": price_score,
+            "label": "Good" if price_score >= 70 else "Fair" if price_score >= 40 else "Poor",
+            "detail": f"Unit price: {sup.get('currency', 'EUR')} {price:,.2f}",
+        })
+
+        # 3. Lead time
+        std_lt = sup.get("standard_lead_time_days")
+        exp_lt = sup.get("expedited_lead_time_days")
+        lt_score = 60  # default
+        lt_detail = "No lead time data"
+        if required_by and std_lt is not None:
+            days = _days_until(required_by, request.get("created_at"))
+            if days and std_lt <= days:
+                lt_score = 100
+                lt_detail = f"Standard ({std_lt}d) meets deadline"
+            elif days and exp_lt is not None and exp_lt <= days:
+                lt_score = 60
+                lt_detail = f"Only expedited ({exp_lt}d) meets deadline"
+            else:
+                lt_score = 20
+                lt_detail = f"Cannot meet deadline (std={std_lt}d)"
+        elif std_lt is not None:
+            lt_score = 80
+            lt_detail = f"Standard: {std_lt} days"
+        cells.append({
+            "dimension": "lead_time",
+            "score": lt_score,
+            "label": "Good" if lt_score >= 70 else "Fair" if lt_score >= 40 else "Poor",
+            "detail": lt_detail,
+        })
+
+        # 4. Geography
+        geo_score = 100
+        if delivery_countries and sup.get("covers_delivery_country") is False:
+            geo_score = 0
+        cells.append({
+            "dimension": "geography",
+            "score": geo_score,
+            "label": "Good" if geo_score >= 70 else "Fair" if geo_score >= 40 else "Poor",
+            "detail": "Covers all delivery countries" if geo_score == 100 else "Partial coverage",
+        })
+
+        # 5. ESG
+        esg = sup.get("esg_score")
+        esg_score = esg if esg is not None else 50
+        cells.append({
+            "dimension": "esg",
+            "score": esg_score,
+            "label": "Good" if esg_score >= 70 else "Fair" if esg_score >= 40 else "Poor",
+            "detail": f"ESG score: {esg_score}",
+        })
+
+        # 6. Quality/Risk
+        quality = sup.get("quality_score") or 50
+        risk = sup.get("risk_score") or 50
+        qr_raw = quality - risk / 2
+        qr_score = max(0, min(100, round(qr_raw)))
+        cells.append({
+            "dimension": "quality_risk",
+            "score": qr_score,
+            "label": "Good" if qr_score >= 70 else "Fair" if qr_score >= 40 else "Poor",
+            "detail": f"Quality: {quality}, Risk: {risk}",
+        })
+
+        heatmap.append({
+            "supplier_id": sup.get("supplier_id", ""),
+            "supplier_name": sup.get("supplier_name", ""),
+            "cells": cells,
+        })
+
+    return heatmap
 
 
 def _build_excluded_list(excluded: list[dict]) -> list[dict]:
@@ -217,6 +332,20 @@ async def analyze_custom(
     # 1. Extract requirements from text
     request = extract_requirements(request_text, optional_fields)
 
+    # 1b. Check for rejection
+    if request.get("is_rejected"):
+        return {
+            "request_id": request.get("request_id", "CUSTOM-001"),
+            "processed_at": datetime.utcnow().isoformat() + "Z",
+            "is_rejected": True,
+            "rejection_message": request.get("rejection_message", "Request cannot be processed."),
+            "request_interpretation": _build_request_interpretation(request),
+            "supplier_shortlist": [],
+            "suppliers_excluded": [],
+            "escalations": [],
+            "agent_opinions": [],
+        }
+
     # 2. Run the pipeline
     data = get_data()
     return await _run_pipeline(request, data)
@@ -229,6 +358,7 @@ async def analyze_custom(
 async def _run_pipeline(
     request: dict[str, Any],
     data: Any,
+    on_step: Any | None = None,
 ) -> dict[str, Any]:
     """Core pipeline — delegates to universal orchestration supervisor."""
     from backend.services.supervisor import execute_orchestration
@@ -237,7 +367,7 @@ async def _run_pipeline(
 
     # Run universal orchestration
     try:
-        result = await execute_orchestration(request, data)
+        result = await execute_orchestration(request, data, on_step=on_step)
     except Exception:
         logger.exception("Orchestration failed for %s, using deterministic fallback", request_id)
         # Fallback: run deterministic-only path
@@ -355,9 +485,11 @@ def _assemble_from_orchestration(
             agent_opinions.append(op)
 
     # Build audit trail
+    eligible = snapshot.eligible_suppliers if snapshot else []
     audit_trail = {
         "policies_checked": [],
-        "supplier_ids_evaluated": [s.get("supplier_id", "") for s in (snapshot.eligible_suppliers if snapshot else [])],
+        "supplier_ids_evaluated": [s.get("supplier_id", "") for s in eligible],
+        "suppliers_evaluated": [{"id": s.get("supplier_id"), "name": s.get("supplier_name")} for s in eligible],
         "data_sources_used": ["requests.json", "suppliers.csv", "pricing.csv", "policies.json", "historical_awards.csv"],
         "historical_awards_consulted": True,
     }
@@ -371,7 +503,7 @@ def _assemble_from_orchestration(
     }
 
     # Build excluded list
-    excluded = [
+    excluded_list = [
         {
             "supplier_id": e.get("supplier_id", ""),
             "supplier_name": e.get("supplier_name", ""),
@@ -415,6 +547,12 @@ def _assemble_from_orchestration(
     if result.process_trace:
         process_trace = result.process_trace.model_dump()
 
+    # Build heatmap
+    supplier_heatmap = _build_heatmap(shortlist, request, snapshot)
+
+    # Near-miss suppliers
+    near_miss_suppliers = snapshot.near_miss_suppliers if snapshot else []
+
     response = {
         "request_id": request.get("request_id", "UNKNOWN"),
         "processed_at": datetime.utcnow().isoformat() + "Z",
@@ -425,7 +563,7 @@ def _assemble_from_orchestration(
         },
         "policy_evaluation": _build_policy_evaluation_dict(snapshot.policy_evaluation) if snapshot else {},
         "supplier_shortlist": shortlist,
-        "suppliers_excluded": excluded,
+        "suppliers_excluded": excluded_list,
         "escalations": escalation_list,
         "recommendation": recommendation,
         "audit_trail": audit_trail,
@@ -443,6 +581,10 @@ def _assemble_from_orchestration(
         "activated_modules": result.activation_plan.activated_modules if result.activation_plan else [],
         "discovery_result": result.discovery_result.model_dump() if result.discovery_result else None,
         "bundle_result": result.bundle_result.model_dump() if result.bundle_result else None,
+        # New fields
+        "near_miss_suppliers": near_miss_suppliers,
+        "supplier_heatmap": supplier_heatmap,
+        "is_rejected": False,
     }
 
     return response
@@ -467,7 +609,7 @@ async def _deterministic_fallback(
     delivery_countries = request.get("delivery_countries", [])
     delivery_country = delivery_countries[0] if delivery_countries else request.get("country", "")
 
-    eligible, excluded = filter_suppliers(request, data.suppliers, data.pricing, data.policies)
+    eligible, excluded, near_miss = filter_suppliers(request, data.suppliers, data.pricing, data.policies)
     pricing_info = []
     for sup in eligible:
         p = get_pricing_for_supplier(sup["supplier_id"], category_l1, category_l2, delivery_country, quantity if quantity > 0 else 1, data.pricing)

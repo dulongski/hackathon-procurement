@@ -57,24 +57,61 @@ def build_critic_context(
     }
 
 
+def _summarize_opinion(opinion: Any) -> dict[str, Any]:
+    """Compress a specialist opinion to key fields only for the judge."""
+    o = opinion.model_dump() if hasattr(opinion, "model_dump") else opinion
+    # Keep only top 3 rankings and trim verbose fields
+    rankings = o.get("supplier_rankings", [])
+    compact_rankings = [
+        {
+            "supplier_id": r.get("supplier_id", ""),
+            "supplier_name": r.get("supplier_name", ""),
+            "score": r.get("score", 50),
+            "rationale": (r.get("rationale") or "")[:150],
+        }
+        for r in rankings[:5]
+    ]
+    return {
+        "agent_name": o.get("agent_name", ""),
+        "opinion_summary": (o.get("opinion_summary") or "")[:300],
+        "supplier_rankings": compact_rankings,
+        "confidence": o.get("confidence"),
+        "key_factors": (o.get("key_factors") or [])[:5],
+    }
+
+
+def _summarize_eligible(suppliers: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Compress eligible supplier list to essential fields for the judge."""
+    return [
+        {
+            "supplier_id": s.get("supplier_id", ""),
+            "supplier_name": s.get("supplier_name", ""),
+            "quality_score": s.get("quality_score"),
+            "risk_score": s.get("risk_score"),
+            "esg_score": s.get("esg_score"),
+            "is_preferred": s.get("is_preferred", False),
+        }
+        for s in suppliers
+    ]
+
+
 def build_judge_context(
     specialist_opinions: list[AgentOpinion],
     critic_findings: list[dict[str, Any]],
     constraint_snapshot: dict[str, Any],
 ) -> dict[str, Any]:
     memory = get_governance_memory()
-    entries = memory.get_scoped_context("judge", limit=5)
+    entries = memory.get_scoped_context("judge", limit=3)
     return {
         "specialist_opinions": [
-            o.model_dump() if hasattr(o, "model_dump") else o
-            for o in specialist_opinions
+            _summarize_opinion(o) for o in specialist_opinions
         ],
         "critic_findings": critic_findings,
         "deterministic_constraints": {
-            "eligible_suppliers": constraint_snapshot.get("eligible_suppliers", []),
-            "pricing_info": constraint_snapshot.get("pricing_info", []),
+            "eligible_suppliers": _summarize_eligible(
+                constraint_snapshot.get("eligible_suppliers", [])
+            ),
             "validation_issues": constraint_snapshot.get("validation_issues", []),
-            "policy_evaluation": constraint_snapshot.get("policy_evaluation", {}),
             "escalations": constraint_snapshot.get("escalations", []),
             "contract_value": constraint_snapshot.get("contract_value", 0),
         },

@@ -6,4 +6,4 @@ __pycache__/
 temp_data/
 .env
 .claude/
-package-lock.json
+# package-lock.json is needed for Docker builds — do not ignore

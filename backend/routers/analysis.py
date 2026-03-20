@@ -48,11 +48,11 @@ async def analyze_custom_stream(body: CustomRequestBody):
         # Emit extraction step
         extract_step = {
             "step_id": "EXT-001",
-            "step_name": "Extract Requirements",
+            "step_name": "Understanding Your Request",
             "step_type": "deterministic",
             "started_at": datetime.now(timezone.utc).isoformat(),
             "status": "in_progress",
-            "step_description": "Parsing your request text to extract structured procurement requirements.",
+            "step_description": "Reading and structuring your procurement needs.",
         }
         yield f"data: {json.dumps(extract_step)}\n\n"
 
@@ -69,7 +69,9 @@ async def analyze_custom_stream(body: CustomRequestBody):
 
         extract_step["status"] = "completed"
         extract_step["completed_at"] = datetime.now(timezone.utc).isoformat()
-        extract_step["output_summary"] = f"Category: {request.get('category_l1', 'Unknown')}, Country: {request.get('country', 'Unknown')}, Budget: {request.get('budget_amount', 'N/A')}"
+        budget_val = request.get('budget_amount', 0)
+        budget_str = f"{request.get('currency', 'EUR')} {budget_val:,.0f}" if budget_val else "Not specified"
+        extract_step["output_summary"] = f"{request.get('category_l1', '?')} · {request.get('country', '?')} · {budget_str}"
         yield f"data: {json.dumps(extract_step)}\n\n"
 
         # Check rejection
@@ -98,26 +100,27 @@ async def analyze_custom_stream(body: CustomRequestBody):
         all_suppliers_for_cat = data.supplier_category_index.get(cat_key, [])
         eligible_count = len(all_suppliers_for_cat)
 
+        qty = request.get('quantity', '?')
+        uom = request.get('unit_of_measure', 'units')
         validate_step = {
-            "step_id": "VAL-001", "step_name": "Validate & Classify",
+            "step_id": "VAL-001", "step_name": "Matching Category",
             "step_type": "deterministic",
             "started_at": datetime.now(timezone.utc).isoformat(),
             "status": "completed",
             "completed_at": datetime.now(timezone.utc).isoformat(),
-            "output_summary": f"{request.get('category_l1', '?')} / {request.get('category_l2', '?')} · "
-                              f"{request.get('quantity', '?')} {request.get('unit_of_measure', 'units')} · "
-                              f"EUR {request.get('budget_amount', 0):,.0f}",
+            "output_summary": f"{request.get('category_l2', '?')} · {qty} {uom}",
         }
         yield f"data: {json.dumps(validate_step)}\n\n"
 
         # Emit: Supplier screening
+        countries = ', '.join(request.get('delivery_countries', [])) or '?'
         sup_step = {
-            "step_id": "SUP-001", "step_name": "Screen Suppliers",
+            "step_id": "SUP-001", "step_name": "Finding Suppliers",
             "step_type": "deterministic",
             "started_at": datetime.now(timezone.utc).isoformat(),
             "status": "completed",
             "completed_at": datetime.now(timezone.utc).isoformat(),
-            "output_summary": f"{eligible_count} eligible · {', '.join(request.get('delivery_countries', [])) or '?'}",
+            "output_summary": f"{eligible_count} suppliers in {countries}",
         }
         yield f"data: {json.dumps(sup_step)}\n\n"
 

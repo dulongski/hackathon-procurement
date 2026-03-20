@@ -116,8 +116,8 @@ def build_constraint_snapshot(
     data: ProcurementData,
 ) -> tuple[ConstraintSnapshot, ProcessStep]:
     """Run all deterministic checks and package into a typed snapshot."""
-    step = _step("CS-001", "Build Deterministic Constraint Snapshot", "deterministic",
-                 "Filtering suppliers by category, delivery country, contract status, and restrictions. Validating budget and lead times.")
+    step = _step("CS-001", "Applying Rules & Constraints", "deterministic",
+                 "Checking policies, budgets, lead times, and supplier eligibility.")
 
     category_l1 = request.get("category_l1", "")
     category_l2 = request.get("category_l2", "")
@@ -187,7 +187,8 @@ def build_constraint_snapshot(
     snapshot._catalog_gap_raw = catalog_gap
     snapshot._bundle_opportunity_raw = bundle_opportunity
 
-    _complete(step, f"{len(eligible)} eligible, {len(excluded)} excluded, {len(escalations)} escalations")
+    esc_note = f" · {len(escalations)} escalation{'s' if len(escalations) != 1 else ''}" if escalations else ""
+    _complete(step, f"{len(eligible)} qualified, {len(excluded)} excluded{esc_note}")
     return snapshot, step
 
 
@@ -200,7 +201,7 @@ def build_activation_plan(
     snapshot: ConstraintSnapshot,
 ) -> tuple[ActivationPlan, ProcessStep]:
     """Decide which modules to activate based on constraint snapshot signals."""
-    step = _step("AP-001", "Build Module Activation Plan", "deterministic",
+    step = _step("AP-001", "Planning Analysis Strategy", "deterministic",
                  "Deciding which analysis modules to activate based on constraint signals.")
 
     modules: list[str] = []
@@ -254,7 +255,9 @@ def build_activation_plan(
         specialist_agents=list(set(specialists)),
     )
 
-    _complete(step, f"Activated: {', '.join(modules)}")
+    module_labels = {"catalog_evaluation": "Supplier Analysis", "new_supplier_discovery": "Discovery", "bundling_optimization": "Bundling", "threshold_approval_review": "Approval Check", "escalation_review": "Escalation Review"}
+    nice_names = [module_labels.get(m, m.replace("_", " ").title()) for m in modules]
+    _complete(step, " + ".join(nice_names))
     return plan, step
 
 
@@ -288,8 +291,8 @@ async def run_critic(
     snapshot: ConstraintSnapshot,
 ) -> tuple[CriticOutput, ProcessStep]:
     """Run the Critic Agent."""
-    step = _step("GOV-001", "Critic Agent Review", "governance",
-                 "Critic reviewing specialist analyses for contradictions, weak evidence, and bias.")
+    step = _step("GOV-001", "Challenging the Analysis", "governance",
+                 "Independent critic checking for bias, weak evidence, and gaps.")
 
     try:
         from backend.services.agents.critic_agent import CriticAgent
@@ -313,7 +316,7 @@ async def run_critic(
             overall_assessment=raw.get("overall_assessment", ""),
             confidence=float(raw.get("confidence", 0.5)),
         )
-        _complete(step, f"{len(findings)} findings, confidence={output.confidence:.2f}")
+        _complete(step, f"{'No issues' if len(findings) == 0 else f'{len(findings)} issue{\"s\" if len(findings) != 1 else \"\"} flagged'}")
         return output, step
 
     except Exception as e:
@@ -329,8 +332,8 @@ async def run_judge(
     snapshot: ConstraintSnapshot,
 ) -> tuple[JudgeDecision, ProcessStep]:
     """Run the Judge Agent."""
-    step = _step("GOV-002", "Judge Agent Adjudication", "governance",
-                 "Judge resolving disagreements and producing final supplier ranking.")
+    step = _step("GOV-002", "Ranking Suppliers", "governance",
+                 "Final adjudicator producing the definitive ranking.")
 
     try:
         from backend.services.agents.judge_agent import JudgeAgent
@@ -361,7 +364,8 @@ async def run_judge(
             confidence_explanation=raw.get("confidence_explanation", ""),
             weight_rationale=raw.get("weight_rationale", ""),
         )
-        _complete(step, f"{len(ranking)} suppliers ranked, confidence={decision.confidence_assessment:.2f}")
+        top = ranking[0].supplier_name if ranking else "None"
+        _complete(step, f"Top pick: {top} · {round(decision.confidence_assessment * 100)}% confidence" if ranking else "No ranking produced")
         return decision, step
 
     except Exception as e:
@@ -394,7 +398,7 @@ async def run_reviewer(
     audit_trail: dict[str, Any],
 ) -> tuple[ReviewerVerdict, ProcessStep]:
     """Run the Reviewer Agent."""
-    step = _step("GOV-003", "Reviewer Agent Verification", "governance",
+    step = _step("GOV-003", "Verifying Audit Readiness", "governance",
                  "Reviewer verifying audit-readiness and internal consistency.")
 
     try:
@@ -416,7 +420,7 @@ async def run_reviewer(
             evidence_gaps=raw.get("evidence_gaps", []),
             sign_off_note=raw.get("sign_off_note", ""),
         )
-        _complete(step, f"audit_ready={verdict.audit_ready}, {len(issues)} issues")
+        _complete(step, "Audit ready" if verdict.audit_ready else f"Review needed · {len(issues)} issue{'s' if len(issues) != 1 else ''}")
         return verdict, step
 
     except Exception as e:
@@ -481,8 +485,8 @@ async def execute_orchestration(
 
     # Catalog evaluation module
     if "catalog_evaluation" in plan.activated_modules:
-        mod_step = _step("MOD-CAT", "Catalog Evaluation Module", "agentic",
-                         "Running 4 specialist agents in parallel: historical precedent, risk assessment, value-for-money, and strategic fit.")
+        mod_step = _step("MOD-CAT", "Analyzing Suppliers", "agentic",
+                         "4 AI specialists scoring history, risk, value, and strategic fit.")
         try:
             from backend.services.modules.catalog_module import run_catalog_module
             historical_awards_for_category = data.historical_awards_by_category.get(
@@ -496,7 +500,7 @@ async def execute_orchestration(
                 data.policies,
                 specialist_agents=plan.specialist_agents or None,
             )
-            _complete(mod_step, f"{len(specialist_opinions)} specialist opinions collected")
+            _complete(mod_step, f"{len(specialist_opinions)} specialist scores collected")
         except Exception as e:
             logger.exception("Catalog module failed")
             _fail(mod_step, str(e))
@@ -504,8 +508,8 @@ async def execute_orchestration(
 
     # Discovery module
     if "new_supplier_discovery" in plan.activated_modules:
-        mod_step = _step("MOD-DISC", "New Supplier Discovery Module", "agentic",
-                         "Searching for alternative suppliers outside current catalog to fill coverage gaps.")
+        mod_step = _step("MOD-DISC", "Discovering New Suppliers", "agentic",
+                         "Searching for alternatives outside current catalog.")
         try:
             from backend.services.modules.discovery_module import run_discovery_module
             catalog_gap = getattr(snapshot, "_catalog_gap_raw", {})
@@ -520,17 +524,17 @@ async def execute_orchestration(
 
     # Bundling module
     if "bundling_optimization" in plan.activated_modules:
-        mod_step = _step("MOD-BUND", "Bundling Optimization Module", "agentic",
-                         "Checking if combining with similar requests unlocks volume discounts.")
+        mod_step = _step("MOD-BUND", "Optimizing Volume", "agentic",
+                         "Checking bundling opportunities for better pricing.")
         try:
             from backend.services.modules.bundling_module import run_bundling_check
             bundle_opp = getattr(snapshot, "_bundle_opportunity_raw", {})
             bundle_result = run_bundling_check(
                 request, bundle_opp, snapshot.eligible_suppliers, data.pricing,
             )
-            summary = f"bundled={bundle_result.bundled}, savings={bundle_result.savings_pct}%"
+            summary = f"{'Bundled' if bundle_result.bundled else 'No bundling'} · {bundle_result.savings_pct}% savings"
             if bundle_result.escalation_triggered:
-                summary += f", escalation={bundle_result.escalation_triggered}"
+                summary += f" · escalation required"
             _complete(mod_step, summary)
         except Exception as e:
             logger.exception("Bundling module failed")
@@ -539,14 +543,14 @@ async def execute_orchestration(
 
     # Threshold module
     if "threshold_approval_review" in plan.activated_modules:
-        mod_step = _step("MOD-THRESH", "Threshold Approval Review", "deterministic",
-                         "Verifying budget thresholds and required approval levels.")
+        mod_step = _step("MOD-THRESH", "Checking Approvals", "deterministic",
+                         "Verifying budget thresholds and approval levels.")
         try:
             from backend.services.modules.threshold_module import review_threshold_decision
             threshold_review = review_threshold_decision(
                 request, snapshot.policy_evaluation, snapshot.escalations,
             )
-            _complete(mod_step, f"conflict={threshold_review.get('policy_conflict')}")
+            _complete(mod_step, "Approved" if not threshold_review.get('policy_conflict') else "Policy conflict detected")
         except Exception as e:
             _fail(mod_step, str(e))
         await _emit(mod_step)
@@ -594,7 +598,7 @@ async def execute_orchestration(
     await _emit(reviewer_step)
 
     # --- Feedback Loop ---
-    fl_step = _step("FL-001", "Feedback Learning Loop", "governance",
+    fl_step = _step("FL-001", "Saving Learnings", "governance",
                     "Writing governance learnings to memory for future decisions.")
     memory_entries = run_feedback_loop(
         critic_output, judge_decision, reviewer_verdict,

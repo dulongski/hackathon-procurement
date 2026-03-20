@@ -1,28 +1,22 @@
-FROM node:20-alpine AS builder
+FROM node:20-alpine
 
 WORKDIR /app
 
+# Copy frontend source
 COPY frontend/package.json frontend/package-lock.json* ./
 RUN npm install
 
 COPY frontend/ .
 
-ARG NEXT_PUBLIC_API_BASE=/api
-ENV NEXT_PUBLIC_API_BASE=${NEXT_PUBLIC_API_BASE}
-
+# Build
+ENV NEXT_PUBLIC_API_BASE=/api
 RUN npm run build
 
-FROM node:20-alpine AS runner
-
-WORKDIR /app
-
+# Run in production mode (not standalone — simpler)
 ENV NODE_ENV=production
 ENV HOSTNAME=0.0.0.0
 ENV PORT=3000
 
-COPY --from=builder /app/.next/standalone ./
-COPY --from=builder /app/.next/static ./.next/static
-
 EXPOSE 3000
 
-CMD ["node", "server.js"]
+CMD ["npm", "start"]

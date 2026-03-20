@@ -1,6 +1,6 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from backend.routers import requests, analysis, whitespace
+from backend.routers import requests, analysis, whitespace, admin
 from backend.data_loader import get_data
 
 app = FastAPI(title="ChainIQ Sourcing Agent", version="1.0.0")
@@ -16,6 +16,7 @@ app.add_middleware(
 app.include_router(requests.router)
 app.include_router(analysis.router)
 app.include_router(whitespace.router)
+app.include_router(admin.router)
 
 
 @app.on_event("startup")

@@ -582,6 +582,34 @@ function ConfidenceGauge({ score }: { score: number }) {
 // ---------------------------------------------------------------------------
 // Tab 1: Recommendation
 // ---------------------------------------------------------------------------
+// Helper: split long text into bullet points by sentence boundaries
+function TextToBullets({ text, maxBullets }: { text: string; maxBullets?: number }) {
+  const [expanded, setExpanded] = useState(false);
+  if (!text) return null;
+  // Split by sentence-ending patterns or semicolons
+  const sentences = text.split(/(?<=[.!;])\s+|(?:\(\d+\)\s*)/).filter(s => s.trim().length > 5);
+  if (sentences.length <= 1) return <p className="text-sm text-ciq-darkgrey">{text}</p>;
+  const limit = maxBullets || 3;
+  const visible = expanded ? sentences : sentences.slice(0, limit);
+  return (
+    <div>
+      <ul className="space-y-1">
+        {visible.map((s, i) => (
+          <li key={i} className="flex items-start gap-2 text-sm text-ciq-darkgrey">
+            <span className="mt-1.5 w-1.5 h-1.5 rounded-full bg-ciq-red/50 flex-shrink-0" />
+            <span>{s.trim()}</span>
+          </li>
+        ))}
+      </ul>
+      {sentences.length > limit && (
+        <button onClick={() => setExpanded(!expanded)} className="mt-1 text-xs text-ciq-red hover:underline ml-3.5">
+          {expanded ? "Show less" : `Show ${sentences.length - limit} more...`}
+        </button>
+      )}
+    </div>
+  );
+}
+
 function RecommendationTab({ analysis }: { analysis: AnalysisResponse }) {
   const rec = analysis.recommendation;
   const confidence = analysis.confidence;
@@ -609,7 +637,7 @@ function RecommendationTab({ analysis }: { analysis: AnalysisResponse }) {
             </span>
           )}
         </div>
-        {rec.reason && <p className={`mt-2 text-sm ${statusStyle.text} opacity-80`}>{rec.reason}</p>}
+        {rec.reason && <TextToBullets text={rec.reason} maxBullets={2} />}
       </div>
 
       {/* Activated Modules */}
@@ -630,7 +658,7 @@ function RecommendationTab({ analysis }: { analysis: AnalysisResponse }) {
         {confidence && (
           <div className="flex flex-col items-center p-6 bg-gray-50 rounded-xl">
             <ConfidenceGauge score={confidence.overall_score} />
-            {confidence.explanation && <p className="text-sm text-gray-600 mt-3 text-center">{confidence.explanation}</p>}
+            {confidence.explanation && <TextToBullets text={confidence.explanation} maxBullets={2} />}
           </div>
         )}
         <div className="space-y-4">
@@ -638,14 +666,14 @@ function RecommendationTab({ analysis }: { analysis: AnalysisResponse }) {
             <div className="p-4 bg-gray-50 rounded-lg">
               <p className="text-xs text-gray-400 uppercase tracking-wider font-medium mb-1">Top Ranked Supplier</p>
               <p className="text-sm text-gray-800 font-medium">{rec.preferred_supplier_if_resolved}</p>
-              {rec.preferred_supplier_rationale && <p className="text-sm text-gray-600 mt-1">{rec.preferred_supplier_rationale}</p>}
+              {rec.preferred_supplier_rationale && <TextToBullets text={rec.preferred_supplier_rationale} />}
             </div>
           )}
           {/* Judge weight rationale */}
           {governance?.judge_decision?.weight_rationale && (
-            <div className="p-4 bg-indigo-50 rounded-lg">
-              <p className="text-xs text-indigo-400 uppercase tracking-wider font-medium mb-1">Judge Weight Rationale</p>
-              <p className="text-sm text-indigo-800">{governance.judge_decision.weight_rationale}</p>
+            <div className="p-4 bg-red-50 rounded-lg">
+              <p className="text-xs text-ciq-red uppercase tracking-wider font-medium mb-1">Judge Weight Rationale</p>
+              <TextToBullets text={governance.judge_decision.weight_rationale} />
             </div>
           )}
         </div>
@@ -933,12 +961,13 @@ function renderWithAwardLinks(text: string, awardsData?: AnalysisResponse["histo
 // ---------------------------------------------------------------------------
 function AgentLogicTab({ analysis }: { analysis: AnalysisResponse }) {
   const agents = analysis.agent_opinions;
+  const [expandedAgent, setExpandedAgent] = useState<string | null>(null);
 
-  const agentMeta: Record<string, { purpose: string; border: string; bg: string }> = {
-    historical: { purpose: "Analyzes past award patterns, win rates, and savings for this category/country", border: "border-blue-200", bg: "bg-blue-50" },
-    risk:       { purpose: "Evaluates supplier risks including delivery, capacity, concentration, and compliance", border: "border-red-200",  bg: "bg-red-50" },
-    value:      { purpose: "Assesses pricing competitiveness, budget fit, and total cost of ownership", border: "border-green-200", bg: "bg-green-50" },
-    strategic:  { purpose: "Evaluates ESG alignment, preferred status, and long-term strategic fit", border: "border-purple-200", bg: "bg-purple-50" },
+  const agentMeta: Record<string, { purpose: string; border: string; bg: string; pill: string }> = {
+    historical: { purpose: "Past award patterns & savings", border: "border-blue-200", bg: "bg-blue-50", pill: "bg-blue-100 text-blue-800" },
+    risk:       { purpose: "Delivery, capacity & compliance risks", border: "border-red-200",  bg: "bg-red-50", pill: "bg-red-100 text-red-800" },
+    value:      { purpose: "Pricing & budget alignment", border: "border-green-200", bg: "bg-green-50", pill: "bg-green-100 text-green-800" },
+    strategic:  { purpose: "ESG, preferred status & strategic fit", border: "border-purple-200", bg: "bg-purple-50", pill: "bg-purple-100 text-purple-800" },
   };
 
   function getAgentMeta(name: string) {
@@ -946,62 +975,108 @@ function AgentLogicTab({ analysis }: { analysis: AnalysisResponse }) {
     for (const [key, val] of Object.entries(agentMeta)) {
       if (lower.includes(key)) return val;
     }
-    return { purpose: "Specialist agent", border: "border-gray-200", bg: "bg-gray-50" };
+    return { purpose: "Specialist agent", border: "border-gray-200", bg: "bg-gray-50", pill: "bg-gray-100 text-gray-700" };
+  }
+
+  // Extract a short summary (first sentence or first 80 chars)
+  function getShortSummary(text: string): string {
+    const first = text.split(/[.!;]/)[0];
+    if (first.length < 100) return first.trim();
+    return first.slice(0, 77).trim() + "...";
   }
 
   if (agents.length === 0) return <p className="text-gray-500 text-sm">No agent opinions available.</p>;
 
   return (
     <div className="space-y-4">
-      <div className="p-3 bg-slate-50 rounded-lg border border-slate-200 text-sm text-slate-600 flex items-center gap-2">
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
-        Specialists evaluated independently — no agent saw another agent&apos;s output during analysis.
+      <div className="p-3 bg-slate-50 rounded-lg border border-slate-200 text-xs text-slate-600 flex items-center gap-2">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+        4 specialists evaluated independently — click each to expand full reasoning.
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
         {agents.map((agent) => {
           const meta = getAgentMeta(agent.agent_name);
+          const isExpanded = expandedAgent === agent.agent_name;
+          const shortSummary = getShortSummary(agent.opinion_summary);
+
           return (
             <div key={agent.agent_name} className={`rounded-xl border ${meta.border} overflow-hidden`}>
-              <div className={`px-5 py-3 ${meta.bg} flex items-center justify-between`}>
-                <h4 className="text-sm font-bold text-gray-800">{agent.agent_name.replace(/_/g, " ")}</h4>
-                {agent.confidence != null && <span className="text-xs font-medium text-gray-600">Confidence: {Math.round(agent.confidence * 100)}%</span>}
+              {/* Header */}
+              <div className={`px-4 py-3 ${meta.bg} flex items-center justify-between`}>
+                <div className="flex items-center gap-2">
+                  <h4 className="text-sm font-bold text-ciq-black">{agent.agent_name.replace(/_/g, " ")}</h4>
+                  <span className="text-[9px] text-gray-400">{meta.purpose}</span>
+                </div>
+                {agent.confidence != null && <span className="text-xs font-bold text-ciq-darkgrey">{Math.round(agent.confidence * 100)}%</span>}
               </div>
-              <div className="p-5 space-y-3">
-                <p className="text-xs text-gray-400 italic">{meta.purpose}</p>
-                <p className="text-sm text-gray-700">
-                  {agent.agent_name.toLowerCase().includes("historical")
-                    ? renderWithAwardLinks(agent.opinion_summary, analysis.historical_awards_data)
-                    : agent.opinion_summary}
-                </p>
+
+              <div className="p-4 space-y-3">
+                {/* Summary pill — short one-liner */}
+                <div className={`inline-block px-3 py-1.5 rounded-full text-xs font-medium ${meta.pill}`}>
+                  {shortSummary}
+                </div>
+
+                {/* Key factors as bullet tags */}
                 {agent.key_factors.length > 0 && (
                   <div className="flex flex-wrap gap-1.5">
-                    {agent.key_factors.map((f, i) => <span key={i} className="px-2 py-0.5 bg-gray-100 text-gray-600 rounded-full text-xs">{f}</span>)}
+                    {agent.key_factors.map((f, i) => (
+                      <span key={i} className="flex items-center gap-1 text-xs text-ciq-darkgrey">
+                        <span className="w-1 h-1 rounded-full bg-ciq-darkgrey/40" />{f}
+                      </span>
+                    ))}
                   </div>
                 )}
+
+                {/* Supplier rankings — always visible */}
                 {agent.supplier_rankings.length > 0 && (
-                  <div className="mt-2 pt-2 border-t border-gray-100 space-y-1.5">
-                    <p className="text-xs text-gray-400 uppercase tracking-wider font-medium">Rankings</p>
+                  <div className="space-y-1.5">
                     {agent.supplier_rankings.map((sr) => (
-                      <div key={sr.supplier_id} className="text-sm">
+                      <div key={sr.supplier_id}>
                         <div className="flex items-center justify-between">
-                          <span className="text-gray-700">{sr.supplier_name}</span>
+                          <span className="text-xs font-medium text-ciq-black">{sr.supplier_name}</span>
                           <div className="flex items-center gap-2">
-                            <div className="w-24 h-1.5 bg-gray-200 rounded-full overflow-hidden">
-                              <div className="h-full bg-indigo-500 rounded-full" style={{ width: `${Math.min(Math.round(sr.score), 100)}%` }} />
+                            <div className="w-20 h-1.5 bg-gray-200 rounded-full overflow-hidden">
+                              <div className="h-full bg-ciq-red rounded-full" style={{ width: `${Math.min(Math.round(sr.score), 100)}%` }} />
                             </div>
-                            <span className="text-xs text-gray-500 w-10 text-right font-mono">{Math.round(sr.score)}</span>
+                            <span className="text-[10px] text-ciq-darkgrey font-mono w-8 text-right">{Math.round(sr.score)}</span>
                           </div>
                         </div>
-                        {sr.rationale && (
-                          <p className="text-xs text-gray-500 mt-0.5 ml-1">
-                            {agent.agent_name.toLowerCase().includes("historical")
-                              ? renderWithAwardLinks(sr.rationale, analysis.historical_awards_data)
-                              : sr.rationale}
-                          </p>
-                        )}
                       </div>
                     ))}
+                  </div>
+                )}
+
+                {/* Expand/collapse for full analysis */}
+                <button onClick={() => setExpandedAgent(isExpanded ? null : agent.agent_name)} className="text-xs text-ciq-red hover:underline flex items-center gap-1">
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className={`transition-transform ${isExpanded ? "rotate-180" : ""}`}><polyline points="6 9 12 15 18 9" /></svg>
+                  {isExpanded ? "Collapse" : "Full analysis"}
+                </button>
+
+                {/* Expanded: full opinion + ranking rationale */}
+                {isExpanded && (
+                  <div className="pt-3 border-t border-gray-100 space-y-3 animate-fade-in">
+                    <div>
+                      <p className="text-[10px] text-gray-400 uppercase tracking-wider font-medium mb-1">Full Opinion</p>
+                      <TextToBullets text={agent.opinion_summary} maxBullets={10} />
+                    </div>
+                    {agent.supplier_rankings.length > 0 && (
+                      <div>
+                        <p className="text-[10px] text-gray-400 uppercase tracking-wider font-medium mb-1">Ranking Rationale</p>
+                        {agent.supplier_rankings.map((sr) => (
+                          sr.rationale && (
+                            <div key={sr.supplier_id} className="mb-2">
+                              <p className="text-xs font-medium text-ciq-black">{sr.supplier_name}</p>
+                              <p className="text-xs text-ciq-darkgrey ml-2">
+                                {agent.agent_name.toLowerCase().includes("historical")
+                                  ? renderWithAwardLinks(sr.rationale, analysis.historical_awards_data)
+                                  : sr.rationale}
+                              </p>
+                            </div>
+                          )
+                        ))}
+                      </div>
+                    )}
                   </div>
                 )}
               </div>

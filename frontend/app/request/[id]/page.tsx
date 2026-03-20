@@ -99,35 +99,50 @@ function generateNextSteps(analysis: AnalysisResponse, request: ProcurementReque
   const escalations = analysis.escalations || [];
   const topSupplier = governance?.judge_decision?.final_ranking?.[0]?.supplier_name || shortlist[0]?.supplier_name;
 
-  // Escalation-based steps
+  // Check if this is a missing-data escalation (ER-001 → Requester only)
+  const isMissingData = escalations.some(e => e.rule === "ER-001");
+
+  if (isMissingData) {
+    // Only show requester-facing actions
+    steps.push({ id: "clarify", label: "Provide Missing Information", detail: "Click 'Clarify Information' above to supply the missing data and re-analyze", enabled: true });
+    return steps;
+  }
+
+  // Escalation-based steps — driven by actual policy rules
   for (const esc of escalations) {
     if (esc.escalate_to) {
-      steps.push({ id: `esc-${esc.escalation_id}`, label: `Notify ${esc.escalate_to}`, detail: `Escalation: ${esc.trigger?.slice(0, 100) || esc.rule || "Review required"}`, enabled: true });
+      steps.push({ id: `esc-${esc.escalation_id}`, label: `Notify ${esc.escalate_to}`, detail: `${esc.rule || "Policy"}: ${esc.trigger?.slice(0, 100) || "Review required"}`, enabled: true });
     }
   }
 
-  // RFP if we have suppliers
+  // RFP if we have ranked suppliers
   if (shortlist.length > 0 || (governance?.judge_decision?.final_ranking?.length || 0) > 0) {
     const names = governance?.judge_decision?.final_ranking?.slice(0, 3).map(s => s.supplier_name).join(", ") || shortlist.slice(0, 3).map(s => s.supplier_name).join(", ");
     steps.push({ id: "rfp", label: "Generate Request for Proposals", detail: `Send RFP to top suppliers: ${names}`, enabled: true });
   }
 
-  // Budget approval
+  // Budget approval — only if budget issues exist
   if (rec?.status?.includes("condition") || analysis.validation?.issues_detected?.some(i => i.type === "budget_insufficient")) {
     steps.push({ id: "budget", label: "Request Budget Approval", detail: `Submit budget amendment to Finance for ${request.currency || "EUR"} ${request.budget_amount?.toLocaleString() || "N/A"}`, enabled: true });
   }
 
-  // Email head of procurement
-  steps.push({ id: "email-proc", label: "Email Head of Procurement", detail: `Summarize analysis for ${request.category_l1 || "this category"} in ${request.country || "target market"}`, enabled: true });
-
-  // Preferred supplier follow-up
+  // Supplier contact — only if there's a top supplier
   if (topSupplier) {
     steps.push({ id: "supplier-contact", label: `Contact ${topSupplier}`, detail: `Request pricing confirmation and availability for ${request.quantity || "N/A"} ${request.unit_of_measure || "units"}`, enabled: true });
   }
 
-  // Compliance review
+  // Compliance review — only if flagged
   if (governance?.reviewer_verdict && !governance.reviewer_verdict.audit_ready) {
     steps.push({ id: "compliance", label: "Schedule Compliance Review", detail: "Governance review flagged audit gaps — schedule manual compliance check", enabled: true });
+  }
+
+  // Approval routing — only if high-value
+  const approvalRouting = analysis.approval_routing;
+  if (approvalRouting?.steps?.some(s => s.status === "pending" || s.status === "escalation_required")) {
+    const pendingApprovers = approvalRouting.steps.filter(s => s.status !== "approved").map(s => s.role);
+    if (pendingApprovers.length > 0) {
+      steps.push({ id: "approval", label: `Route for Approval`, detail: `Pending approval from: ${pendingApprovers.join(", ")}`, enabled: true });
+    }
   }
 
   return steps;

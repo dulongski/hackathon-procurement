@@ -10,7 +10,7 @@ import type {
 } from "./types";
 
 // Hit backend directly to avoid Next.js proxy timeout on long-running analysis calls
-const API_BASE = process.env.NEXT_PUBLIC_API_BASE || "http://localhost:8000/api";
+const API_BASE = typeof window !== "undefined" ? "/api" : (process.env.NEXT_PUBLIC_API_BASE || "http://localhost:8000/api");
 
 export async function fetchRequests(params?: {
   scenario_tag?: string;

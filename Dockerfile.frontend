@@ -2,17 +2,18 @@ FROM node:20-alpine
 
 WORKDIR /app
 
-# Copy frontend source
 COPY frontend/package.json frontend/package-lock.json* ./
 RUN npm install
 
 COPY frontend/ .
 
-# Build
+# Set the backend URL for the Next.js rewrite proxy at build time
+ARG BACKEND_URL=http://backend:8000
+ENV BACKEND_URL=${BACKEND_URL}
 ENV NEXT_PUBLIC_API_BASE=/api
+
 RUN npm run build
 
-# Run in production mode (not standalone — simpler)
 ENV NODE_ENV=production
 ENV HOSTNAME=0.0.0.0
 ENV PORT=3000

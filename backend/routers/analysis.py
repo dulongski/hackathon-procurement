@@ -128,7 +128,7 @@ async def analyze_custom_stream(body: CustomRequestBody):
         if request.get("is_whitespace") or request.get("category_l1") is None:
             from backend.services.whitespace_store import get_whitespace_store
             ws = get_whitespace_store()
-            ws.record_demand(request)
+            ws.record(request)
 
         # Start pipeline in background task
         pipeline_task = asyncio.create_task(

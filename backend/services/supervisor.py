@@ -316,7 +316,8 @@ async def run_critic(
             overall_assessment=raw.get("overall_assessment", ""),
             confidence=float(raw.get("confidence", 0.5)),
         )
-        _complete(step, f"{'No issues' if len(findings) == 0 else f'{len(findings)} issue{\"s\" if len(findings) != 1 else \"\"} flagged'}")
+        count = len(findings)
+        _complete(step, "No issues" if count == 0 else f"{count} issue{'s' if count != 1 else ''} flagged")
         return output, step
 
     except Exception as e:

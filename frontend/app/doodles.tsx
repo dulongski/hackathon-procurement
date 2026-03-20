@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback } from "react";
+import { useState, useEffect } from "react";
 
 const PATHS = [
   "M20 7h-4V4c0-1.1-.9-2-2-2h-4c-1.1 0-2 .9-2 2v3H4c-1.1 0-2 .9-2 2v11c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V9c0-1.1-.9-2-2-2zM10 4h4v3h-4V4z", // briefcase
@@ -44,16 +44,20 @@ const DOODLES = generateDoodles();
 export function DoodleBackground() {
   const [mouse, setMouse] = useState({ x: 50, y: 50 });
 
-  const onMove = useCallback((e: React.MouseEvent) => {
-    const rect = e.currentTarget.getBoundingClientRect();
-    setMouse({
-      x: ((e.clientX - rect.left) / rect.width) * 100,
-      y: ((e.clientY - rect.top) / rect.height) * 100,
-    });
+  // Listen on document mousemove — works regardless of z-index layering
+  useEffect(() => {
+    const handler = (e: MouseEvent) => {
+      setMouse({
+        x: (e.clientX / window.innerWidth) * 100,
+        y: (e.clientY / window.innerHeight) * 100,
+      });
+    };
+    window.addEventListener("mousemove", handler, { passive: true });
+    return () => window.removeEventListener("mousemove", handler);
   }, []);
 
   return (
-    <div className="absolute inset-0 overflow-hidden pointer-events-none" onPointerMove={onMove as unknown as React.PointerEventHandler} style={{ pointerEvents: "auto" }}>
+    <div className="absolute inset-0 overflow-hidden pointer-events-none">
       <div className="absolute inset-0 pointer-events-none">
         {DOODLES.map((d, i) => {
           const layer = i % 3;

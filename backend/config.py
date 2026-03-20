@@ -64,5 +64,19 @@ for _region, _countries in _REGION_COUNTRIES.items():
 
 REGION_COUNTRIES = _REGION_COUNTRIES
 
+# Exchange rates to EUR (base)
+EXCHANGE_RATES_TO_EUR: dict[str, float] = {
+    "EUR": 1.0,
+    "USD": 0.92,
+    "CHF": 1.04,
+    "GBP": 1.16,
+}
+
+def convert_to_eur(amount: float | None, currency: str) -> float | None:
+    if amount is None:
+        return None
+    rate = EXCHANGE_RATES_TO_EUR.get(currency, 1.0)
+    return round(amount * rate, 2)
+
 GOVERNANCE_MEMORY_ENABLED: bool = True
 BUNDLING_ENABLED: bool = True

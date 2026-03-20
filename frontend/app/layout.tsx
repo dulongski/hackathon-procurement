@@ -3,6 +3,7 @@
 import { Inter } from "next/font/google";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { DoodleBackground } from "./doodles";
 import "./globals.css";
 
 const inter = Inter({ subsets: ["latin"] });
@@ -63,8 +64,11 @@ export default function RootLayout({
           </aside>
 
           {/* Main Content */}
-          <main className="flex-1 overflow-y-auto">
-            {children}
+          <main className="flex-1 overflow-y-auto relative">
+            <DoodleBackground />
+            <div className="relative z-10">
+              {children}
+            </div>
           </main>
         </div>
       </body>

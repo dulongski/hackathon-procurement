@@ -99,8 +99,10 @@ function generateNextSteps(analysis: AnalysisResponse, request: ProcurementReque
   const escalations = analysis.escalations || [];
   const topSupplier = governance?.judge_decision?.final_ranking?.[0]?.supplier_name || shortlist[0]?.supplier_name;
 
-  // Check if this is a missing-data escalation (ER-001 → Requester only)
-  const isMissingData = escalations.some(e => e.rule === "ER-001");
+  // Check if this is a missing-data case — from escalation rules OR validation issues
+  const isMissingData = escalations.some(e => e.rule === "ER-001" || e.escalate_to === "Requester" || (e.trigger || "").toLowerCase().includes("missing"))
+    || analysis.validation?.issues_detected?.some(i => ["missing_budget", "missing_quantity", "missing_category"].includes(i.type))
+    || (analysis.confidence?.overall_score === 0 && analysis.validation?.issues_detected && analysis.validation.issues_detected.length > 0);
 
   if (isMissingData) {
     // Only show requester-facing actions

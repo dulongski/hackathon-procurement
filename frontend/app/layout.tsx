@@ -32,7 +32,7 @@ export default function RootLayout({
           {/* Sidebar */}
           <aside className="w-64 flex-shrink-0 flex flex-col" style={{ backgroundColor: "#0f172a" }}>
             {/* Brand */}
-            <div className="px-4 py-4 border-b border-white/10">
+            <div className="px-4 py-5 border-b border-white/10 flex justify-center">
               <img src="/logo.png" alt="ChainIQ" className="h-10 w-auto object-contain" />
             </div>
 

@@ -40,21 +40,27 @@ class ValueAgent(BaseAgent):
 
             supplier_ids = {s.get("supplier_id") for s in eligible_suppliers}
 
-            # Filter pricing to eligible suppliers only
-            relevant_pricing = [
-                {
+            # Filter pricing to eligible suppliers and convert to EUR
+            from backend.config import convert_to_eur
+            relevant_pricing = []
+            for p in pricing_info:
+                if p.get("supplier_id") not in supplier_ids:
+                    continue
+                currency = p.get("currency", "EUR")
+                unit_price = p.get("unit_price") or p.get("unit_price_eur")
+                exp_price = p.get("expedited_unit_price") or p.get("expedited_unit_price_eur")
+                relevant_pricing.append({
                     "supplier_id": p.get("supplier_id"),
-                    "tier": p.get("tier"),
-                    "min_qty": p.get("min_qty"),
-                    "max_qty": p.get("max_qty"),
-                    "unit_price_eur": p.get("unit_price_eur"),
-                    "lead_time_days": p.get("lead_time_days"),
+                    "currency": currency,
+                    "min_qty": p.get("min_quantity") or p.get("min_qty"),
+                    "max_qty": p.get("max_quantity") or p.get("max_qty"),
+                    "unit_price": unit_price,
+                    "unit_price_eur": convert_to_eur(unit_price, currency),
+                    "lead_time_days": p.get("standard_lead_time_days") or p.get("lead_time_days"),
                     "expedited_lead_time_days": p.get("expedited_lead_time_days"),
-                    "expedited_unit_price_eur": p.get("expedited_unit_price_eur"),
-                }
-                for p in pricing_info
-                if p.get("supplier_id") in supplier_ids
-            ]
+                    "expedited_unit_price_eur": convert_to_eur(exp_price, currency),
+                })
+            relevant_pricing = relevant_pricing[:100]
 
             user_prompt = json.dumps(
                 {

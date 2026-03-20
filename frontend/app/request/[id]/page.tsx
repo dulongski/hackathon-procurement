@@ -637,7 +637,7 @@ function RecommendationTab({ analysis }: { analysis: AnalysisResponse }) {
             </span>
           )}
         </div>
-        {rec.reason && <TextToBullets text={rec.reason} maxBullets={2} />}
+        <TextToBullets text={rec.reason || (rec.status.includes("cannot") ? "The request cannot proceed in its current form. Review escalations and validation issues in the Audit Trail tab for specific blockers." : rec.status.includes("condition") ? "The request can proceed with conditions. Review the required approvals and escalations below." : "The request is approved to proceed.")} maxBullets={3} />
       </div>
 
       {/* Activated Modules */}
@@ -1382,10 +1382,13 @@ function ComparisonTab({ analysis }: { analysis: AnalysisResponse }) {
 
   const dimensions = heatmap[0]?.cells.map(c => c.dimension) || [];
 
-  function cellColor(score: number) {
-    if (score >= 70) return "bg-green-100 text-green-800";
-    if (score >= 40) return "bg-amber-100 text-amber-800";
-    return "bg-red-100 text-red-800";
+  function cellColor(score: number): string {
+    if (score >= 90) return "bg-green-500 text-white";
+    if (score >= 75) return "bg-green-300 text-green-900";
+    if (score >= 60) return "bg-yellow-200 text-yellow-900";
+    if (score >= 45) return "bg-amber-300 text-amber-900";
+    if (score >= 30) return "bg-orange-400 text-white";
+    return "bg-red-500 text-white";
   }
 
   function dimensionLabel(dim: string) {

@@ -33,15 +33,17 @@ SYSTEM_PROMPT = (
     "    - rank: integer (1 = best)\n"
     "    - composite_score: float 0-100\n"
     "    - justification: string explaining why this rank\n"
-    "- disagreements_resolved: list of objects, each with:\n"
-    "    - topic: what agents disagreed about\n"
+    "- disagreements_resolved: list (NEVER empty — if agents agreed, state that. "
+    "Always include at least 1 entry describing how specialist scores were reconciled)\n"
+    "    - topic: what aspect was compared\n"
     "    - agents_involved: list of agent names\n"
     "    - resolution: what you decided\n"
     "    - reasoning: why\n"
-    "- bias_checks: list of strings describing bias checks performed\n"
+    "- bias_checks: list of strings (NEVER empty — always perform at least: "
+    "'Checked incumbent preference', 'Checked lowest-price anchoring', 'Checked preferred-supplier favoritism')\n"
     "- confidence_assessment: float 0-1\n"
-    "- confidence_explanation: string explaining confidence level\n"
-    "- weight_rationale: string explaining how you weighted different factors"
+    "- confidence_explanation: string (1 sentence, be direct)\n"
+    "- weight_rationale: string (1-2 sentences max, state the key weight choices)"
 )
 
 

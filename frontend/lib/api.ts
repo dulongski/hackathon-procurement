@@ -12,9 +12,20 @@ import type {
 // For regular API calls, use the Next.js proxy (relative path)
 // For streaming SSE calls, hit the backend directly to avoid proxy buffering
 const API_BASE = typeof window !== "undefined" ? "/api" : (process.env.NEXT_PUBLIC_API_BASE || "http://localhost:8000/api");
-const STREAM_BASE = typeof window !== "undefined"
-  ? (process.env.NEXT_PUBLIC_STREAM_BASE || "http://localhost:8000/api")
-  : "http://localhost:8000/api";
+
+function getStreamBase(): string {
+  if (typeof window === "undefined") return "http://localhost:8000/api";
+  // Check for explicit env var (baked at build time)
+  const envStream = process.env.NEXT_PUBLIC_STREAM_BASE;
+  if (envStream) return envStream;
+  // Auto-detect: if we're on starliner, use the api subdomain
+  const host = window.location.hostname;
+  if (host.includes("starliner")) {
+    return `http://${host.replace(/^[^.]+/, "chainiq-api")}/api`;
+  }
+  return "http://localhost:8000/api";
+}
+const STREAM_BASE = typeof window !== "undefined" ? getStreamBase() : "http://localhost:8000/api";
 
 export async function fetchRequests(params?: {
   scenario_tag?: string;

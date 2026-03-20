@@ -114,7 +114,7 @@ export default function ProcurePage() {
     <div className="flex items-center justify-center h-full relative">
       <div className={`flex flex-col items-center w-full px-6 ${showTimeline ? "" : "max-w-2xl"}`}>
         {/* Logo */}
-        <img src="/logo.png" alt="ChainIQ" className="h-20 w-auto object-contain mb-6" />
+        <img src="/logo2.png" alt="ChainIQ" className="h-20 w-auto object-contain mb-6" />
 
         <TypewriterSubtitle />
 

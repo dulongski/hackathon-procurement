@@ -454,12 +454,12 @@ async def execute_orchestration(
 
     # --- GUARDRAIL: Inject verified extraction summary for agents ---
     # This prevents agents from re-parsing raw text and confusing budget with quantity.
-    qty = request.get("quantity", 0)
-    budget = request.get("budget_amount", 0)
-    currency = request.get("currency", "EUR")
+    qty = request.get("quantity") or 0
+    budget = request.get("budget_amount") or 0
+    currency = request.get("currency") or "EUR"
     request["_agent_guardrail"] = (
         f"VERIFIED EXTRACTION — DO NOT RE-PARSE FROM TEXT: "
-        f"quantity={qty} units, budget={budget:,.0f} {currency}. "
+        f"quantity={qty} units, budget={float(budget):,.0f} {currency}. "
         f"These are CONFIRMED values from the extraction pipeline. "
         f"Do NOT report contradictions between quantity and budget — they measure different things. "
         f"Do NOT extract alternative quantities or budgets from request_text."

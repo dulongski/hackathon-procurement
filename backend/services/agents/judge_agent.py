@@ -49,7 +49,7 @@ class JudgeAgent(BaseAgent):
     """Final adjudicator — resolves disagreements and produces definitive ranking."""
 
     def __init__(self):
-        super().__init__("judge", max_tokens=AGENT_MAX_TOKENS, use_fast_model=True)
+        super().__init__("judge", max_tokens=1500, use_fast_model=True)
 
     async def analyze(self, context: dict) -> dict:
         try:

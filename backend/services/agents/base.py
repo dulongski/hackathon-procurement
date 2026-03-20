@@ -66,14 +66,24 @@ class BaseAgent:
             loop.close()
 
     def _call_claude(self, system_prompt: str, user_prompt: str, max_tokens: int | None = None) -> str:
-        """Make a synchronous call to Claude and return the text response."""
-        response = self.client.messages.create(
-            model=self.model,
-            max_tokens=max_tokens or self.max_tokens,
-            system=system_prompt,
-            messages=[{"role": "user", "content": user_prompt}],
-        )
-        return response.content[0].text
+        """Make a synchronous call to Claude with retry on timeout."""
+        tokens = max_tokens or self.max_tokens
+        for attempt in range(2):  # 1 retry
+            try:
+                response = self.client.messages.create(
+                    model=self.model,
+                    max_tokens=tokens,
+                    system=system_prompt,
+                    messages=[{"role": "user", "content": user_prompt}],
+                )
+                return response.content[0].text
+            except Exception as e:
+                if attempt == 0 and ("timeout" in str(e).lower() or "timed out" in str(e).lower()):
+                    logger.warning("Agent %s timed out, retrying with fewer tokens...", self.name)
+                    tokens = min(tokens, 512)  # reduce tokens for retry
+                    continue
+                raise
+        raise TimeoutError(f"Agent {self.name} timed out after retries")
 
     def _parse_json_response(self, text: str) -> dict:
         """Extract JSON from Claude response, handling markdown code blocks and truncation."""

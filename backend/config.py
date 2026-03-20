@@ -30,11 +30,11 @@ AGENT_MODEL = "claude-sonnet-4-6"
 AGENT_MAX_TOKENS = 4096
 AGENT_TEMPERATURE = 0.0
 
-# Per-role token limits
-SPECIALIST_MAX_TOKENS = 1024
-GOVERNANCE_MAX_TOKENS = 1500
+# Per-role token limits — keep short for speed
+SPECIALIST_MAX_TOKENS = 800
+GOVERNANCE_MAX_TOKENS = 1200
 
-# Use Haiku for specialist agents — 10x faster, good enough for scoring
+# Use Haiku for all agents — 10x faster
 SPECIALIST_MODEL = os.environ.get("SPECIALIST_MODEL", "claude-haiku-4-5-20251001")
 
 # Use Haiku for extraction too — faster parsing
@@ -43,8 +43,8 @@ EXTRACTOR_MODEL = os.environ.get("EXTRACTOR_MODEL", "claude-haiku-4-5-20251001")
 # Extraction cache size
 EXTRACTOR_CACHE_SIZE = 128
 
-# Timeout for agent API calls (seconds)
-AGENT_TIMEOUT = 30
+# Timeout for agent API calls (seconds) — hard cap
+AGENT_TIMEOUT = 15
 
 # ---------------------------------------------------------------------------
 # Country-to-region mapping

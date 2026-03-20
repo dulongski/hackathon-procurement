@@ -9,8 +9,12 @@ import type {
   WhitespaceEntry,
 } from "./types";
 
-// Hit backend directly to avoid Next.js proxy timeout on long-running analysis calls
+// For regular API calls, use the Next.js proxy (relative path)
+// For streaming SSE calls, hit the backend directly to avoid proxy buffering
 const API_BASE = typeof window !== "undefined" ? "/api" : (process.env.NEXT_PUBLIC_API_BASE || "http://localhost:8000/api");
+const STREAM_BASE = typeof window !== "undefined"
+  ? (process.env.NEXT_PUBLIC_STREAM_BASE || "http://localhost:8000/api")
+  : "http://localhost:8000/api";
 
 export async function fetchRequests(params?: {
   scenario_tag?: string;
@@ -60,7 +64,7 @@ export async function analyzeCustomStream(
   body: CustomRequestInput,
   onStep: (step: ProcessStep) => void,
 ): Promise<AnalysisResponse> {
-  const res = await fetch(`${API_BASE}/analyze/custom/stream`, {
+  const res = await fetch(`${STREAM_BASE}/analyze/custom/stream`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
@@ -114,7 +118,7 @@ export async function analyzeRequestStream(
   id: string,
   onStep: (step: ProcessStep) => void,
 ): Promise<AnalysisResponse> {
-  const res = await fetch(`${API_BASE}/analyze/${id}/stream`, { method: "POST" });
+  const res = await fetch(`${STREAM_BASE}/analyze/${id}/stream`, { method: "POST" });
   if (!res.ok) throw new Error(`Failed to start streaming analysis: ${res.statusText}`);
 
   const reader = res.body!.getReader();

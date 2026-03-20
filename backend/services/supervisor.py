@@ -475,6 +475,48 @@ async def execute_orchestration(
     snapshot._agent_guardrail = request.get("_agent_guardrail", "")
     await _emit(cs_step)
 
+    # --- EARLY EXIT: Missing critical data → escalate ER-001, skip agents ---
+    missing_types = {"missing_budget", "missing_quantity", "missing_category"}
+    critical_missing = [v for v in snapshot.validation_issues if v.get("type") in missing_types]
+    if critical_missing:
+        missing_fields = [v["type"].replace("missing_", "") for v in critical_missing]
+        esc_step = _step("ESC-ER001", "Escalating to Requester", "deterministic",
+                         f"Missing critical data: {', '.join(missing_fields)}. Cannot proceed without requester input.")
+        # Add ER-001 escalation
+        snapshot.escalations.append({
+            "escalation_id": "ESC-ER001",
+            "rule": "ER-001",
+            "trigger": f"Missing required information: {', '.join(missing_fields)}",
+            "escalate_to": "Requester",
+            "blocking": True,
+        })
+        _complete(esc_step, f"Blocked — awaiting {', '.join(missing_fields)} from requester")
+        await _emit(esc_step)
+
+        # Build minimal result and return immediately
+        total_ms = int((time.time() - start_time) * 1000)
+        return OrchestrationResult(
+            process_trace=ProcessTrace(steps=steps, activated_modules=[], total_duration_ms=total_ms),
+            specialist_opinions=[],
+            critic_output=CriticOutput(findings=[], overall_assessment="Skipped — missing data.", confidence=0.0),
+            judge_decision=JudgeDecision(
+                final_ranking=[], disagreements_resolved=[], bias_checks=[],
+                confidence_assessment=0.0,
+                confidence_explanation=f"Cannot assess — missing {', '.join(missing_fields)}.",
+                weight_rationale="No ranking produced due to missing data.",
+            ),
+            reviewer_verdict=ReviewerVerdict(
+                audit_ready=False,
+                issues=[ReviewIssue(issue_type="completeness", description=f"Missing: {', '.join(missing_fields)}", severity="critical")],
+                consistency_checks=[], evidence_gaps=missing_fields,
+                sign_off_note=f"Request incomplete. Escalated to requester for: {', '.join(missing_fields)}.",
+            ),
+            recommendation={"status": "cannot_proceed", "reason": f"Missing critical data ({', '.join(missing_fields)}). Escalated to requester per rule ER-001."},
+            snapshot=snapshot,
+            discovery_result=None,
+            bundle_result=None,
+        )
+
     # --- Phase A: Activation Plan ---
     plan, ap_step = build_activation_plan(request, snapshot)
     await _emit(ap_step)

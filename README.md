@@ -4,6 +4,8 @@
 
 An AI-powered procurement sourcing agent that converts unstructured purchase requests into structured, defensible supplier comparisons. Every decision flows through a full governance pipeline: **Supervisor → Specialists → Critic → Judge → Reviewer** — with deterministic fallbacks ensuring no request is ever left without an answer.
 
+http://chainiq.starliner.195.201.216.144.nip.io/
+
 ## Quick Start
 
 ```bash

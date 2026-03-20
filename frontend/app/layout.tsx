@@ -66,7 +66,7 @@ export default function RootLayout({
           {/* Main Content */}
           <main className="flex-1 overflow-y-auto relative">
             <DoodleBackground />
-            <div className="relative z-10">
+            <div className="relative z-10 h-full">
               {children}
             </div>
           </main>

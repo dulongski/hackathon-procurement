@@ -100,8 +100,8 @@ export default function BacklogPage() {
   return (
     <div className="p-6 max-w-[1400px] mx-auto">
       <div className="mb-6">
-        <h1 className="text-2xl font-bold text-ciq-black">Backlog</h1>
-        <p className="text-ciq-darkgrey mt-1">Open requests with active follow-up actions</p>
+        <h1 className="page-title">Backlog</h1>
+        <p className="page-subtitle">Open requests with active follow-up actions</p>
       </div>
 
       {entries.length === 0 ? (

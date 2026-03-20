@@ -144,8 +144,8 @@ export default function AnalyticsPage() {
     <div className="p-6 max-w-[1400px] mx-auto">
       <div className="mb-4 flex items-center justify-between flex-wrap gap-3">
         <div>
-          <h1 className="text-2xl font-bold text-ciq-black">Analytics Dashboard</h1>
-          <p className="text-ciq-darkgrey mt-1">Procurement intelligence &amp; spend analytics</p>
+          <h1 className="page-title">Analytics Dashboard</h1>
+          <p className="page-subtitle">Procurement intelligence &amp; spend analytics</p>
         </div>
         <div className="flex gap-2">
           <button onClick={() => setShowAudit(true)} className="px-4 py-2 bg-ciq-darkgrey text-white rounded-lg text-sm font-medium hover:bg-black transition-colors flex items-center gap-2">

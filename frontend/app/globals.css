@@ -13,6 +13,20 @@ body {
   font-family: "Visby CF", "Inter", system-ui, sans-serif;
 }
 
+/* Branded page title */
+.page-title {
+  @apply text-2xl font-bold tracking-tight;
+  background: linear-gradient(135deg, #FF0000, #CC0000);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
+.page-subtitle {
+  @apply text-sm mt-1;
+  color: #555;
+}
+
 /* Custom scrollbar */
 ::-webkit-scrollbar {
   width: 6px;

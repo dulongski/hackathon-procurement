@@ -54,8 +54,8 @@ export default function HistoricalPage() {
   return (
     <div className="p-6 max-w-[1400px] mx-auto">
       <div className="mb-6">
-        <h1 className="text-2xl font-bold text-gray-900">Historical Awards</h1>
-        <p className="text-gray-500 mt-1">Past procurement decisions for analysis</p>
+        <h1 className="page-title">Historical Awards</h1>
+        <p className="page-subtitle">Past procurement decisions for analysis</p>
       </div>
 
       {/* Filters */}

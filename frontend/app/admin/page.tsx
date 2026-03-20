@@ -12,8 +12,8 @@ export default function AdminPage() {
   return (
     <div className="p-6 max-w-[1400px] mx-auto">
       <div className="mb-5">
-        <h1 className="text-2xl font-bold text-ciq-black">Administration</h1>
-        <p className="text-ciq-darkgrey mt-1">Manage suppliers, policies, and procurement rules</p>
+        <h1 className="page-title">Administration</h1>
+        <p className="page-subtitle">Manage suppliers, policies, and procurement rules</p>
       </div>
 
       <div className="flex gap-1 mb-5 bg-white rounded-xl shadow-sm border border-gray-200 p-1.5">

@@ -7,7 +7,7 @@ import logging
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any
 
-from backend.models import AgentOpinion
+from backend.models import AgentOpinion, SupplierRanking
 from backend.services.agents.historical_agent import HistoricalAgent
 from backend.services.agents.risk_agent import RiskAgent
 from backend.services.agents.value_agent import ValueAgent
@@ -17,8 +17,8 @@ logger = logging.getLogger(__name__)
 _EXECUTOR = ThreadPoolExecutor(max_workers=4)
 
 
-def _run_agent_in_thread(agent, ctx: dict) -> AgentOpinion | None:
-    """Run a single agent synchronously in a thread."""
+def _run_agent_in_thread(agent, ctx: dict) -> AgentOpinion:
+    """Run a single agent synchronously in a thread. Always returns an opinion."""
     try:
         import asyncio as _aio
         loop = _aio.new_event_loop()
@@ -28,8 +28,24 @@ def _run_agent_in_thread(agent, ctx: dict) -> AgentOpinion | None:
             loop.close()
         return _convert_to_opinion(agent.name, result, ctx.get("eligible_suppliers", []))
     except Exception:
-        logger.exception("Agent %s failed in catalog module", agent.name)
-        return None
+        logger.exception("Agent %s failed in catalog module — using fallback", agent.name)
+        # Return a fallback opinion so this agent is never silently missing
+        suppliers = ctx.get("eligible_suppliers", [])
+        return AgentOpinion(
+            agent_name=agent.name,
+            opinion_summary=f"{agent.name.replace('_', ' ').title()} agent encountered an error. Scores are default estimates.",
+            supplier_rankings=[
+                SupplierRanking(
+                    supplier_id=s.get("supplier_id", ""),
+                    supplier_name=s.get("supplier_name", ""),
+                    score=50,
+                    rationale="Default score — agent was unavailable.",
+                )
+                for s in suppliers[:5]
+            ],
+            confidence=0.2,
+            key_factors=["Agent fallback — low confidence"],
+        )
 
 
 def _convert_to_opinion(
@@ -152,5 +168,6 @@ async def run_catalog_module(
             opinions.append(r)
         elif isinstance(r, Exception):
             logger.error("Catalog module agent failed: %s", r)
+        # None values are now impossible — _run_agent_in_thread always returns AgentOpinion
 
     return opinions

@@ -457,21 +457,25 @@ def _assemble_from_orchestration(
                 "recommendation_note": js.justification,
             })
 
-    # Build recommendation
-    has_blocking = any(e.get("blocking", False) for e in (snapshot.escalations if snapshot else []))
-    has_critical = any(v.get("severity") == "critical" for v in (snapshot.validation_issues if snapshot else []))
-
-    if has_blocking or has_critical:
-        rec_status = "cannot_proceed"
-    elif snapshot and snapshot.escalations:
-        rec_status = "proceed_with_conditions"
+    # Build recommendation — use orchestration's own recommendation if it set one (e.g., early exit)
+    orch_rec = getattr(result, "recommendation", None)
+    if orch_rec and isinstance(orch_rec, dict) and orch_rec.get("status"):
+        rec_status = orch_rec["status"]
     else:
-        rec_status = "can_proceed"
+        has_blocking = any(e.get("blocking", False) for e in (snapshot.escalations if snapshot else []))
+        has_critical = any(v.get("severity") == "critical" for v in (snapshot.validation_issues if snapshot else []))
+
+        if has_blocking or has_critical:
+            rec_status = "cannot_proceed"
+        elif snapshot and snapshot.escalations:
+            rec_status = "proceed_with_conditions"
+        else:
+            rec_status = "can_proceed"
 
     top = judge.final_ranking[0] if judge and judge.final_ranking else None
     recommendation = {
         "status": rec_status,
-        "reason": judge.confidence_explanation if judge else "Analysis complete.",
+        "reason": (orch_rec or {}).get("reason") or (judge.confidence_explanation if judge else "Analysis complete."),
         "preferred_supplier_if_resolved": top.supplier_name if top else None,
         "preferred_supplier_rationale": top.justification if top else None,
         "minimum_budget_required": None,

@@ -496,13 +496,14 @@ async def execute_orchestration(
         # Build minimal result and return immediately
         total_ms = int((time.time() - start_time) * 1000)
         return OrchestrationResult(
+            constraint_snapshot=snapshot,
             process_trace=ProcessTrace(steps=steps, activated_modules=[], total_duration_ms=total_ms),
             specialist_opinions=[],
             critic_output=CriticOutput(findings=[], overall_assessment="Skipped — missing data.", confidence=0.0),
             judge_decision=JudgeDecision(
                 final_ranking=[], disagreements_resolved=[], bias_checks=[],
                 confidence_assessment=0.0,
-                confidence_explanation=f"Cannot assess — missing {', '.join(missing_fields)}.",
+                confidence_explanation=f"Cannot proceed — missing {', '.join(missing_fields)}. Escalated to requester per ER-001.",
                 weight_rationale="No ranking produced due to missing data.",
             ),
             reviewer_verdict=ReviewerVerdict(
@@ -511,10 +512,6 @@ async def execute_orchestration(
                 consistency_checks=[], evidence_gaps=missing_fields,
                 sign_off_note=f"Request incomplete. Escalated to requester for: {', '.join(missing_fields)}.",
             ),
-            recommendation={"status": "cannot_proceed", "reason": f"Missing critical data ({', '.join(missing_fields)}). Escalated to requester per rule ER-001."},
-            snapshot=snapshot,
-            discovery_result=None,
-            bundle_result=None,
         )
 
     # --- Phase A: Activation Plan ---

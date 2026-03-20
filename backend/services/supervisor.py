@@ -344,7 +344,7 @@ async def run_judge(
                 "policy_evaluation": snapshot.policy_evaluation,
                 "escalations": snapshot.escalations,
                 "contract_value": snapshot.contract_value,
-                "_agent_guardrail": request.get("_agent_guardrail", ""),
+                "_agent_guardrail": getattr(snapshot, "_agent_guardrail", ""),
             },
         )
         agent = JudgeAgent()
@@ -467,6 +467,7 @@ async def execute_orchestration(
 
     # --- Phase A: Constraint Snapshot ---
     snapshot, cs_step = build_constraint_snapshot(request, data)
+    snapshot._agent_guardrail = request.get("_agent_guardrail", "")
     await _emit(cs_step)
 
     # --- Phase A: Activation Plan ---

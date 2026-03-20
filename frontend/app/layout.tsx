@@ -31,18 +31,8 @@ export default function RootLayout({
           {/* Sidebar */}
           <aside className="w-64 flex-shrink-0 flex flex-col" style={{ backgroundColor: "#0f172a" }}>
             {/* Brand */}
-            <div className="px-6 py-5 border-b border-white/10">
-              <div className="flex items-center gap-3">
-                <div className="w-9 h-9 rounded-lg bg-gradient-to-br from-red-500 to-red-700 flex items-center justify-center">
-                  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-                    <path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z" />
-                  </svg>
-                </div>
-                <div>
-                  <h1 className="text-white font-bold text-lg tracking-tight">ChainIQ</h1>
-                  <p className="text-gray-400 text-xs">Sourcing Agent</p>
-                </div>
-              </div>
+            <div className="px-4 py-4 border-b border-white/10">
+              <img src="/logo.png" alt="ChainIQ" className="h-10 w-auto object-contain" />
             </div>
 
             {/* Navigation */}

@@ -75,13 +75,8 @@ export default function ProcurePage() {
     <div className="flex items-center justify-center h-full">
       <div className={`flex flex-col items-center w-full px-6 ${showTimeline ? "" : "max-w-2xl"}`}>
         {/* Logo */}
-        <div className="w-16 h-16 rounded-2xl bg-gradient-to-br from-red-500 to-red-700 flex items-center justify-center mb-5">
-          <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-            <path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z" />
-          </svg>
-        </div>
+        <img src="/logo.png" alt="ChainIQ" className="h-20 w-auto object-contain mb-6" />
 
-        <h1 className="text-3xl font-bold text-ciq-black mb-2">ChainIQ</h1>
         <p className="text-ciq-darkgrey text-center mb-8">
           Every procurement decision, focused and streamlined
         </p>

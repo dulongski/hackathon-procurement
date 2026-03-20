@@ -10,6 +10,7 @@ async def list_requests(
     scenario_tag: Optional[str] = Query(None),
     category_l1: Optional[str] = Query(None),
     country: Optional[str] = Query(None),
+    status: Optional[str] = Query(None),
     page: int = Query(1, ge=1),
     page_size: int = Query(50, ge=1, le=200),
 ):
@@ -23,6 +24,8 @@ async def list_requests(
         results = [r for r in results if r.get("category_l1") == category_l1]
     if country:
         results = [r for r in results if r.get("country") == country]
+    if status:
+        results = [r for r in results if r.get("status") == status]
 
     total = len(results)
     start = (page - 1) * page_size
@@ -32,6 +35,52 @@ async def list_requests(
         "page_size": page_size,
         "requests": results[start : start + page_size],
     }
+
+
+@router.get("/historical")
+async def list_historical_awards(
+    category_l1: Optional[str] = Query(None),
+    country: Optional[str] = Query(None),
+    page: int = Query(1, ge=1),
+    page_size: int = Query(50, ge=1, le=1000),
+):
+    """List historical awards with optional filtering."""
+    data = get_data()
+    results = data.historical_awards
+
+    if category_l1:
+        results = [r for r in results if r.get("category_l1") == category_l1]
+    if country:
+        results = [r for r in results if r.get("country") == country or r.get("delivery_country") == country]
+
+    # Enrich with request title/tags
+    enriched = []
+    for award in results:
+        row = dict(award)
+        req = data.requests_by_id.get(award.get("request_id", ""))
+        if req:
+            row["request_title"] = req.get("title", "")
+            row["scenario_tags"] = req.get("scenario_tags", [])
+        enriched.append(row)
+
+    total = len(enriched)
+    start = (page - 1) * page_size
+    return {
+        "total": total,
+        "page": page,
+        "page_size": page_size,
+        "awards": enriched[start : start + page_size],
+    }
+
+
+@router.get("/historical/filters")
+async def get_historical_filters():
+    """Return unique filter values from historical awards."""
+    data = get_data()
+    categories = sorted(set(r.get("category_l1", "") for r in data.historical_awards if r.get("category_l1")))
+    countries = sorted(set(r.get("country", "") for r in data.historical_awards if r.get("country")))
+    suppliers = sorted(set(r.get("supplier_name", "") for r in data.historical_awards if r.get("supplier_name")))
+    return {"categories": categories, "countries": countries, "suppliers": suppliers}
 
 
 @router.get("/requests/{request_id}")

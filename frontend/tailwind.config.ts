@@ -7,7 +7,17 @@ const config: Config = {
     "./components/**/*.{js,ts,jsx,tsx,mdx}",
   ],
   theme: {
-    extend: {},
+    extend: {
+      colors: {
+        "ciq-red": "#FF0000",
+        "ciq-darkgrey": "#333333",
+        "ciq-white": "#E7E7E7",
+        "ciq-black": "#000000",
+      },
+      fontFamily: {
+        sans: ['"Visby CF"', "Inter", "system-ui", "sans-serif"],
+      },
+    },
   },
   plugins: [],
 };

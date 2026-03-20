@@ -59,6 +59,8 @@ def _build_request_interpretation(request: dict) -> dict:
         "budget_amount": request.get("budget_amount"),
         "budget_min": request.get("budget_min"),
         "budget_max": request.get("budget_max"),
+        "budget_confidence": request.get("budget_confidence"),
+        "budget_source": request.get("budget_source"),
         "currency": request.get("currency", "EUR"),
         "delivery_country": (
             request.get("delivery_countries", [None])[0]
@@ -78,6 +80,7 @@ def _build_request_interpretation(request: dict) -> dict:
         "requester_instruction": request.get("request_text"),
         "quantity_inferred": request.get("quantity_inferred", False),
         "quantity_confidence": request.get("quantity_confidence"),
+        "quantity_dimensions": request.get("quantity_dimensions", []),
         "category_confidence": request.get("category_confidence"),
         "is_whitespace": request.get("is_whitespace", False),
         "urgency_level": request.get("urgency_level"),
@@ -309,6 +312,11 @@ async def analyze_request(request_id: str) -> dict[str, Any]:
     except Exception:
         logger.warning("Extractor failed for %s; proceeding with raw request", request_id)
 
+    # Record whitespace demand if applicable
+    if request.get("is_whitespace"):
+        from backend.services.whitespace_store import get_whitespace_store
+        get_whitespace_store().record(request)
+
     return await _run_pipeline(request, data)
 
 
@@ -346,6 +354,11 @@ async def analyze_custom(
             "agent_opinions": [],
         }
 
+    # 1c. Record whitespace demand if applicable
+    if request.get("is_whitespace"):
+        from backend.services.whitespace_store import get_whitespace_store
+        get_whitespace_store().record(request)
+
     # 2. Run the pipeline
     data = get_data()
     return await _run_pipeline(request, data)
@@ -374,7 +387,7 @@ async def _run_pipeline(
         return await _deterministic_fallback(request, data)
 
     # Convert OrchestrationResult to AnalysisResponse format
-    return _assemble_from_orchestration(request, result)
+    return _assemble_from_orchestration(request, result, data)
 
 
 # ---------------------------------------------------------------------------
@@ -384,6 +397,7 @@ async def _run_pipeline(
 def _assemble_from_orchestration(
     request: dict[str, Any],
     result: Any,  # OrchestrationResult
+    data: Any = None,
 ) -> dict[str, Any]:
     """Convert OrchestrationResult into AnalysisResponse dict."""
     from datetime import datetime
@@ -585,6 +599,11 @@ def _assemble_from_orchestration(
         "near_miss_suppliers": near_miss_suppliers,
         "supplier_heatmap": supplier_heatmap,
         "is_rejected": False,
+        "historical_awards_data": (
+            data.historical_awards_by_category.get(
+                (request.get("category_l1", ""), request.get("category_l2", "")), []
+            )[:50] if data and hasattr(data, 'historical_awards_by_category') else []
+        ),
     }
 
     return response

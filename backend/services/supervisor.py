@@ -148,6 +148,20 @@ def build_constraint_snapshot(
     # Policy evaluation
     policy_eval = evaluate_policies(request, contract_value, eligible, data.policies)
 
+    # Supplier-category mismatch warning
+    pref_eval = policy_eval.get("preferred_supplier", {})
+    if pref_eval.get("mentioned") and not pref_eval.get("is_preferred", False):
+        validation_issues.append({
+            "issue_id": f"V-{len(validation_issues)+1:03d}",
+            "severity": "high",
+            "type": "supplier_category_mismatch",
+            "description": (
+                f"Preferred supplier {pref_eval.get('supplier_name', 'unknown')} is not a registered "
+                f"provider for {category_l1}/{category_l2}; alternative suppliers were considered."
+            ),
+            "action_required": "Review supplier qualification or select an approved supplier for this category.",
+        })
+
     # Escalations
     escalations = check_escalations(request, validation_issues, policy_eval, eligible, pricing_info)
 
@@ -330,6 +344,7 @@ async def run_judge(
                 "policy_evaluation": snapshot.policy_evaluation,
                 "escalations": snapshot.escalations,
                 "contract_value": snapshot.contract_value,
+                "_agent_guardrail": request.get("_agent_guardrail", ""),
             },
         )
         agent = JudgeAgent()
@@ -432,6 +447,19 @@ async def execute_orchestration(
     start_time = time.time()
     steps: list[ProcessStep] = []
 
+    # --- GUARDRAIL: Inject verified extraction summary for agents ---
+    # This prevents agents from re-parsing raw text and confusing budget with quantity.
+    qty = request.get("quantity", 0)
+    budget = request.get("budget_amount", 0)
+    currency = request.get("currency", "EUR")
+    request["_agent_guardrail"] = (
+        f"VERIFIED EXTRACTION — DO NOT RE-PARSE FROM TEXT: "
+        f"quantity={qty} units, budget={budget:,.0f} {currency}. "
+        f"These are CONFIRMED values from the extraction pipeline. "
+        f"Do NOT report contradictions between quantity and budget — they measure different things. "
+        f"Do NOT extract alternative quantities or budgets from request_text."
+    )
+
     async def _emit(step: ProcessStep) -> None:
         steps.append(step)
         if on_step is not None:
@@ -456,11 +484,14 @@ async def execute_orchestration(
                          "Running 4 specialist agents in parallel: historical precedent, risk assessment, value-for-money, and strategic fit.")
         try:
             from backend.services.modules.catalog_module import run_catalog_module
+            historical_awards_for_category = data.historical_awards_by_category.get(
+                (request.get("category_l1", ""), request.get("category_l2", "")), []
+            )
             specialist_opinions = await run_catalog_module(
                 request,
                 snapshot.eligible_suppliers,
                 snapshot.pricing_info,
-                data.historical_awards,
+                historical_awards_for_category,
                 data.policies,
                 specialist_agents=plan.specialist_agents or None,
             )
@@ -472,7 +503,8 @@ async def execute_orchestration(
 
     # Discovery module
     if "new_supplier_discovery" in plan.activated_modules:
-        mod_step = _step("MOD-DISC", "New Supplier Discovery Module", "agentic")
+        mod_step = _step("MOD-DISC", "New Supplier Discovery Module", "agentic",
+                         "Searching for alternative suppliers outside current catalog to fill coverage gaps.")
         try:
             from backend.services.modules.discovery_module import run_discovery_module
             catalog_gap = getattr(snapshot, "_catalog_gap_raw", {})
@@ -487,7 +519,8 @@ async def execute_orchestration(
 
     # Bundling module
     if "bundling_optimization" in plan.activated_modules:
-        mod_step = _step("MOD-BUND", "Bundling Optimization Module", "agentic")
+        mod_step = _step("MOD-BUND", "Bundling Optimization Module", "agentic",
+                         "Checking if combining with similar requests unlocks volume discounts.")
         try:
             from backend.services.modules.bundling_module import run_bundling_check
             bundle_opp = getattr(snapshot, "_bundle_opportunity_raw", {})
@@ -505,7 +538,8 @@ async def execute_orchestration(
 
     # Threshold module
     if "threshold_approval_review" in plan.activated_modules:
-        mod_step = _step("MOD-THRESH", "Threshold Approval Review", "deterministic")
+        mod_step = _step("MOD-THRESH", "Threshold Approval Review", "deterministic",
+                         "Verifying budget thresholds and required approval levels.")
         try:
             from backend.services.modules.threshold_module import review_threshold_decision
             threshold_review = review_threshold_decision(

@@ -17,7 +17,11 @@ SYSTEM_PROMPT = (
     "in similar categories and geographies. Use historical data to inform supplier "
     "rankings and suggest weight adjustments when history strongly favors or "
     "disfavors certain factors.\n\n"
-    "Be precise. Each rationale must cite 1-2 specific data points. No filler. Return compact JSON."
+    "CRITICAL: Every claim in your reasoning MUST cite specific award_id(s). "
+    "Format: 'AWD-000123 (REQ-000456): Supplier X chosen due to lower cost'. "
+    "If no historical evidence supports a claim, state that explicitly.\n\n"
+    "Be precise. Each rationale must cite 1-2 specific data points with award_ids. "
+    "No filler. Return compact JSON."
 )
 
 
@@ -25,7 +29,7 @@ class HistoricalAgent(BaseAgent):
     """Analyzes historical_awards.csv for same category/country patterns."""
 
     def __init__(self):
-        super().__init__("historical_precedent", max_tokens=SPECIALIST_MAX_TOKENS)
+        super().__init__("historical_precedent", max_tokens=SPECIALIST_MAX_TOKENS, use_fast_model=True)
 
     async def analyze(self, context: dict) -> dict:
         """
@@ -85,6 +89,7 @@ class HistoricalAgent(BaseAgent):
             )
 
             prompt = (
+                "IMPORTANT: " + request.get("_agent_guardrail", "") + "\n\n"
                 "Based on the historical award data and current request details below, "
                 "analyze which suppliers have the strongest historical track record.\n\n"
                 f"{user_prompt}\n\n"

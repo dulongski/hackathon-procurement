@@ -49,7 +49,7 @@ class JudgeAgent(BaseAgent):
     """Final adjudicator — resolves disagreements and produces definitive ranking."""
 
     def __init__(self):
-        super().__init__("judge", max_tokens=AGENT_MAX_TOKENS)
+        super().__init__("judge", max_tokens=AGENT_MAX_TOKENS, use_fast_model=True)
 
     async def analyze(self, context: dict) -> dict:
         try:
@@ -68,9 +68,13 @@ class JudgeAgent(BaseAgent):
                 default=str,
             )
 
+            guardrail = deterministic_constraints.get("_agent_guardrail", "") if isinstance(deterministic_constraints, dict) else ""
             prompt = (
+                ("IMPORTANT: " + guardrail + "\n\n" if guardrail else "") +
                 "As the final adjudicator, review all specialist opinions, critic findings, "
                 "and deterministic constraints below. Produce the definitive supplier ranking.\n\n"
+                "Keep justifications CONCISE: 1-2 sentences max per supplier. "
+                "State the key factor driving the rank, not a formula breakdown.\n\n"
                 f"{user_prompt}"
             )
 

@@ -41,9 +41,12 @@ export interface RequestInterpretation {
   requester_instruction?: string;
   quantity_inferred?: boolean;
   quantity_confidence?: string;
+  quantity_dimensions?: { dimension: string; quantity: number; unit: string }[];
   category_confidence?: number;
   is_whitespace?: boolean;
   urgency_level?: string;
+  budget_confidence?: string;
+  budget_source?: string;
 }
 
 export interface ValidationIssue {
@@ -223,6 +226,7 @@ export interface AnalysisResponse {
   supplier_heatmap?: SupplierHeatmapRow[];
   is_rejected?: boolean;
   rejection_message?: string;
+  historical_awards_data?: HistoricalAward[];
 }
 
 export interface CategoryStat {
@@ -366,9 +370,66 @@ export interface BundleModuleResult {
   escalation_triggered?: string;
 }
 
+export interface HistoricalAward {
+  award_id: string;
+  request_id: string;
+  supplier_id: string;
+  supplier_name?: string;
+  award_value?: number;
+  ranking?: number;
+  category_l1?: string;
+  category_l2?: string;
+  delivery_country?: string;
+  [key: string]: unknown;
+}
+
+export interface WhitespaceSupplier {
+  name: string;
+  description: string;
+  website?: string;
+  coverage?: string;
+  strengths?: string;
+}
+
+export interface WhitespaceEntry {
+  entry_id: string;
+  inferred_category_label: string;
+  request_ids: string[];
+  frequency_count: number;
+  countries: string[];
+  estimated_budget_range?: string;
+  first_seen: string;
+  last_seen: string;
+  research_status: string;
+  discovered_suppliers: WhitespaceSupplier[];
+}
+
 export interface PaginatedRequests {
   total: number;
   page: number;
   page_size: number;
   requests: ProcurementRequest[];
+}
+
+export interface HistoricalAwardRow {
+  award_id: string;
+  request_id: string;
+  supplier_id: string;
+  supplier_name?: string;
+  award_value?: number;
+  ranking?: number;
+  category_l1?: string;
+  category_l2?: string;
+  delivery_country?: string;
+  award_date?: string;
+  request_title?: string;
+  scenario_tags?: string[];
+  [key: string]: unknown;
+}
+
+export interface PaginatedHistoricalAwards {
+  total: number;
+  page: number;
+  page_size: number;
+  awards: HistoricalAwardRow[];
 }

@@ -24,7 +24,7 @@ class RiskAgent(BaseAgent):
     """Evaluates supplier risks based on risk scores, delivery, capacity, and restrictions."""
 
     def __init__(self):
-        super().__init__("risk_assessment", max_tokens=SPECIALIST_MAX_TOKENS)
+        super().__init__("risk_assessment", max_tokens=SPECIALIST_MAX_TOKENS, use_fast_model=True)
 
     async def analyze(self, context: dict) -> dict:
         """
@@ -78,6 +78,7 @@ class RiskAgent(BaseAgent):
             )
 
             prompt = (
+                "IMPORTANT: " + request.get("_agent_guardrail", "") + "\n\n"
                 "Evaluate the risk profile for each supplier in the context of this "
                 "procurement request.\n\n"
                 f"{user_prompt}\n\n"

@@ -24,7 +24,7 @@ class ValueAgent(BaseAgent):
     """Evaluates pricing and budget fit across eligible suppliers."""
 
     def __init__(self):
-        super().__init__("value_for_money", max_tokens=SPECIALIST_MAX_TOKENS)
+        super().__init__("value_for_money", max_tokens=SPECIALIST_MAX_TOKENS, use_fast_model=True)
 
     async def analyze(self, context: dict) -> dict:
         """
@@ -74,6 +74,7 @@ class ValueAgent(BaseAgent):
             )
 
             prompt = (
+                "IMPORTANT: " + request.get("_agent_guardrail", "") + "\n\n" +
                 "Analyze the pricing and value-for-money for each supplier given the "
                 "procurement request and available pricing tiers.\n\n"
                 f"{user_prompt}\n\n"

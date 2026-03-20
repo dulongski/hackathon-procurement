@@ -12,7 +12,7 @@ from typing import Any
 
 import anthropic
 
-from backend.config import ANTHROPIC_API_KEY, AGENT_MODEL, AGENT_MAX_TOKENS
+from backend.config import ANTHROPIC_API_KEY, AGENT_MODEL, AGENT_MAX_TOKENS, SPECIALIST_MODEL
 
 logger = logging.getLogger(__name__)
 
@@ -118,7 +118,7 @@ def generate_explanation(
 
     try:
         response = client.messages.create(
-            model=AGENT_MODEL,
+            model=SPECIALIST_MODEL,
             max_tokens=AGENT_MAX_TOKENS,
             system=SYSTEM_PROMPT,
             messages=[{"role": "user", "content": user_prompt}],

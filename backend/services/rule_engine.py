@@ -114,75 +114,78 @@ def validate_request(request, suppliers_data, pricing_data):
             "action_required": "Requester must provide a valid quantity.",
         })
 
+    # --- Missing category check ---
+    if not category_l1 or category_l1 == "":
+        issue_counter += 1
+        issues.append({
+            "issue_id": f"V-{issue_counter:03d}",
+            "severity": "critical",
+            "type": "missing_category",
+            "description": "Category is missing. Cannot route or evaluate procurement request.",
+            "action_required": "Requester must specify a procurement category.",
+        })
+
+    # --- Missing delivery countries check ---
+    if not delivery_countries:
+        issue_counter += 1
+        issues.append({
+            "issue_id": f"V-{issue_counter:03d}",
+            "severity": "high",
+            "type": "missing_delivery_countries",
+            "description": "Delivery countries not specified. Supplier filtering and compliance checks may be incomplete.",
+            "action_required": "Requester should specify delivery countries.",
+        })
+
+    # --- Missing required-by date check ---
+    if required_by is None:
+        issue_counter += 1
+        issues.append({
+            "issue_id": f"V-{issue_counter:03d}",
+            "severity": "medium",
+            "type": "missing_required_by_date",
+            "description": "Required-by date not specified. Lead time feasibility cannot be assessed.",
+            "action_required": "Requester should provide a delivery deadline if applicable.",
+        })
+
     # --- Text contradiction checks ---
     if request_text:
         text_numbers = _extract_numbers_from_text(request_text)
 
-        # Check quantity contradiction
+        # Check quantity contradiction — but EXCLUDE timeline-days and budget-annotated numbers
         if quantity is not None and quantity > 0:
-            # Look for quantity-like numbers in text that differ from the field
-            # Heuristic: look for patterns like "Need X units" or "X consulting days"
+            # Strip out budget annotations and timeline patterns before scanning
+            cleaned_text = re.sub(r'\[BUDGET:\w+\]', '', request_text)
+            cleaned_text = re.sub(r'(?:in|within|next|receive.*?in)\s+(?:the\s+)?(?:next\s+)?\d+[-–]\d+\s+days', '', cleaned_text, flags=re.IGNORECASE)
+            cleaned_text = re.sub(r'(?:in|within|next)\s+(?:the\s+)?(?:next\s+)?\d+\s+days', '', cleaned_text, flags=re.IGNORECASE)
+            # Also remove budget-context numbers (numbers near currency/budget words)
+            cleaned_text = re.sub(r'(?:budget|EUR|USD|CHF)\s*(?:is\s+)?(?:of\s+)?\s*[\d,]+(?:\.\d+)?', '', cleaned_text, flags=re.IGNORECASE)
+
             qty_pattern = re.findall(
                 r'(\d[\d\s,]*\d|\d+)\s*(?:units?|devices?|laptops?|monitors?|'
                 r'chairs?|desks?|licen[cs]es?|seats?|consulting[_ ]?days?|'
-                r'days?|instance[_ ]?hours?|campaigns?|items?)',
-                request_text, re.IGNORECASE
+                r'panels?|windows?|instance[_ ]?hours?|campaigns?|items?|pieces?)',
+                cleaned_text, re.IGNORECASE
             )
             for match in qty_pattern:
                 cleaned = match.replace(" ", "").replace(",", "")
                 try:
                     text_qty = float(cleaned)
-                    if text_qty != quantity and text_qty > 0:
+                    # Only flag if it's a genuinely different quantity (not a budget number)
+                    if text_qty != quantity and text_qty > 0 and text_qty < 100000:
                         issue_counter += 1
                         issues.append({
                             "issue_id": f"V-{issue_counter:03d}",
-                            "severity": "high",
+                            "severity": "medium",
                             "type": "quantity_contradiction",
                             "description": (
                                 f"Quantity in request text ({int(text_qty)}) differs from "
-                                f"structured field ({quantity}). Clarification needed."
+                                f"structured field ({quantity}). Clarification may be needed."
                             ),
-                            "action_required": "Requester must confirm the correct quantity.",
+                            "action_required": "Requester should confirm the correct quantity.",
                         })
                         break
                 except ValueError:
                     pass
-
-        # Check budget contradiction
-        if budget is not None and budget > 0:
-            # Look for budget-like patterns in text
-            budget_pattern = re.findall(
-                r'(?:budget|cost|spend|price|amount|approximately|approx\.?|~|EUR|CHF|USD)\s*'
-                r'(?:is\s+)?(?:of\s+)?(?:approximately\s+)?(?:around\s+)?'
-                r'([\d][\d\s,\.]*[\d]|[\d]+)',
-                request_text, re.IGNORECASE
-            )
-            for match in budget_pattern:
-                cleaned = match.replace(" ", "").replace(",", "")
-                dot_parts = cleaned.split(".")
-                if len(dot_parts) == 2 and len(dot_parts[1]) <= 2:
-                    text_budget = float(cleaned)
-                else:
-                    cleaned = cleaned.replace(".", "")
-                    try:
-                        text_budget = float(cleaned)
-                    except ValueError:
-                        continue
-
-                # Allow small tolerance (1%) for rounding
-                if text_budget > 0 and abs(text_budget - budget) / max(budget, 1) > 0.01:
-                    issue_counter += 1
-                    issues.append({
-                        "issue_id": f"V-{issue_counter:03d}",
-                        "severity": "high",
-                        "type": "budget_contradiction",
-                        "description": (
-                            f"Budget in request text ({text_budget:,.2f}) differs from "
-                            f"structured field ({budget:,.2f} {currency}). Clarification needed."
-                        ),
-                        "action_required": "Requester must confirm the correct budget.",
-                    })
-                    break
 
     # --- Budget sufficiency check ---
     budget_max = request.get("budget_max")

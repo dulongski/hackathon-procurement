@@ -12,52 +12,92 @@ from typing import Any, Optional
 
 import anthropic
 
-from backend.config import ANTHROPIC_API_KEY, AGENT_MODEL, AGENT_MAX_TOKENS
+from backend.config import ANTHROPIC_API_KEY, AGENT_MODEL, AGENT_MAX_TOKENS, EXTRACTOR_MODEL
 
 logger = logging.getLogger(__name__)
 
 client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY or "missing")
 
-_BASE_SYSTEM_PROMPT = (
-    "You are a procurement requirement extraction specialist. "
-    "Extract structured procurement data from the request text provided. "
-    "If the text is not in English, translate it first and include both the "
-    "original text and your English translation in the output.\n\n"
-    "Return ONLY a JSON object with the following keys (use null for any field "
-    "you cannot determine from the text):\n"
-    "- category_l1: top-level procurement category (e.g. 'IT', 'Professional Services', "
-    "'Facilities', 'Marketing')\n"
-    "- category_l2: sub-category (e.g. 'Cloud Compute', 'IT Project Management Services')\n"
-    "- category_confidence: a float between 0.0 and 1.0 indicating how confident you are "
-    "in the category match\n"
-    "- quantity: numeric quantity requested\n"
-    "- unit_of_measure: unit for the quantity (e.g. 'units', 'consulting_day', 'instance_hour')\n"
-    "- budget_amount: numeric budget amount\n"
-    "- budget_min: minimum budget if a range is given\n"
-    "- budget_max: maximum budget if a range is given\n"
-    "- quantity_inferred: boolean, true if quantity was guessed/inferred rather than explicitly stated\n"
-    "- quantity_confidence: one of 'high', 'medium', 'low'\n"
-    "- currency: currency code (e.g. 'EUR', 'USD', 'CHF')\n"
-    "- country: requester country code (e.g. 'DE', 'FR', 'US')\n"
-    "- delivery_countries: list of country codes where delivery is needed\n"
-    "- required_by_date: date string in YYYY-MM-DD format\n"
-    "- preferred_supplier: name of preferred supplier if mentioned\n"
-    "- urgency_level: one of 'low', 'medium', 'high', 'critical'\n"
-    "- special_requirements: list of strings for any special requirements "
-    "(e.g. data residency, ESG, certifications)\n"
-    "- data_residency_constraint: boolean, true if data residency is mentioned\n"
-    "- esg_requirement: boolean, true if ESG/sustainability requirements are mentioned\n"
-    "- original_language: ISO language code of the original text\n"
-    "- original_text: the original text if not English, otherwise null\n"
-    "- translated_text: English translation if original was not English, otherwise null\n"
-    "- title: a short title summarizing the request\n\n"
-    "For budget ranges like '50k-100k', set budget_min=50000, budget_max=100000. "
-    "For 'around 40k', set budget_min=36000, budget_max=44000 (+/-10%). "
-    "Set budget_amount to the midpoint. "
-    "If quantity is not explicit, infer it. For campaigns/projects/services, default to 1. "
-    "Always set quantity_inferred and quantity_confidence.\n\n"
-    "Return ALL mentioned delivery countries in the delivery_countries list, not just one.\n"
-)
+# Simple extraction cache to avoid re-extracting identical text
+_extraction_cache: dict[int, dict[str, Any]] = {}
+
+def _get_base_system_prompt() -> str:
+    from datetime import date
+    today = date.today().isoformat()
+    return (
+        "You are a procurement requirement extraction specialist. "
+        f"TODAY'S DATE IS {today}. Use this for all date calculations. "
+        "The current year is " + str(date.today().year) + ". "
+        "Extract structured procurement data from the request text provided. "
+        "If the text is not in English, translate it first and include both the "
+        "original text and your English translation in the output.\n\n"
+
+        "CRITICAL RULES FOR PARSING:\n"
+        "1. DAYS vs QUANTITY: 'days' mentioned in context like 'within 30 days', "
+        "'needed in 15 days', 'days until required' refer to DELIVERY TIMELINE, NOT quantity. "
+        "Only count days as quantity if the request is explicitly for consulting days "
+        "(e.g., '200 consulting days'). If someone says '500 units, needed in 30 days', "
+        "quantity=500, and required_by_date = today + 30 days.\n"
+        "2. BUDGET vs QUANTITY: These are COMPLETELY INDEPENDENT fields. NEVER confuse them.\n"
+        "   - '500 windows and 500k budget' → quantity=500, budget_amount=500000. TOTALLY DIFFERENT numbers.\n"
+        "   - '200 laptops, budget 50k' → quantity=200, budget_amount=50000.\n"
+        "   - The 'k' suffix means ×1000 and ONLY applies to the exact token it's attached to.\n"
+        "   - '500' is five hundred. '500k' is five hundred thousand. They are NOT the same.\n"
+        "   - NEVER set budget_min/budget_max unless the user gives an EXPLICIT range like '400k-600k'.\n"
+        "   - '+/- X%' means a TOLERANCE, not a range. '500k +/- 11%' means budget_amount=500000, budget_min=445000, budget_max=555000.\n"
+        "   - If no range or tolerance is stated, set budget_min=null, budget_max=null.\n"
+        "   - There is NEVER a contradiction between quantity and budget. They measure different things.\n"
+        "   - '500 items at 500k budget' = 500 items, 500000 budget. Unit price = 1000/item. That is NORMAL.\n"
+        "3. DATES: When the user says 'in X days' or 'within X days', calculate "
+        f"required_by_date = {today} + X days (in YYYY-MM-DD format). "
+        "When they say 'by next month', calculate the last day of next month. "
+        "When they say a specific date, use that date directly.\n\n"
+
+        "Return ONLY a JSON object with the following keys (use null for any field "
+        "you cannot determine from the text):\n"
+        "- category_l1: top-level procurement category (e.g. 'IT', 'Professional Services', "
+        "'Facilities', 'Marketing')\n"
+        "- category_l2: sub-category (e.g. 'Cloud Compute', 'IT Project Management Services')\n"
+        "- category_confidence: a float between 0.0 and 1.0 indicating how confident you are "
+        "in the category match\n"
+        "- quantity: numeric quantity of items/units requested (NOT days unless explicitly consulting days)\n"
+        "- unit_of_measure: unit for the quantity (e.g. 'units', 'consulting_day', 'instance_hour')\n"
+        "- budget_amount: numeric budget amount (the total budget, not unit price)\n"
+        "- budget_min: minimum budget if a range is given\n"
+        "- budget_max: maximum budget if a range is given\n"
+        "- quantity_inferred: boolean, true if quantity was guessed/inferred rather than explicitly stated\n"
+        "- quantity_confidence: one of 'high', 'medium', 'low'\n"
+        "- quantity_dimensions: list of objects, each with {dimension: string, quantity: number, unit: string}. "
+        "Use when the request mentions multiple distinct dimensions "
+        "(e.g., '8 consulting days and 50 devices' → "
+        "[{\"dimension\": \"service\", \"quantity\": 8, \"unit\": \"consulting_day\"}, "
+        "{\"dimension\": \"goods\", \"quantity\": 50, \"unit\": \"devices\"}]). "
+        "Do NOT put delivery timeline days as a quantity dimension. "
+        "If only one dimension, still include it in the list.\n"
+        "- currency: currency code (e.g. 'EUR', 'USD', 'CHF')\n"
+        "- country: requester country code (e.g. 'DE', 'FR', 'US')\n"
+        "- delivery_countries: list of country codes where delivery is needed\n"
+        "- required_by_date: date string in YYYY-MM-DD format\n"
+        "- days_until_required: integer number of days from today until required\n"
+        "- preferred_supplier: name of preferred supplier if mentioned\n"
+        "- urgency_level: one of 'low', 'medium', 'high', 'critical'\n"
+        "- special_requirements: list of strings for any special requirements "
+        "(e.g. data residency, ESG, certifications)\n"
+        "- data_residency_constraint: boolean, true if data residency is mentioned\n"
+        "- esg_requirement: boolean, true if ESG/sustainability requirements are mentioned\n"
+        "- original_language: ISO language code of the original text\n"
+        "- original_text: the original text if not English, otherwise null\n"
+        "- translated_text: English translation if original was not English, otherwise null\n"
+        "- budget_confidence: one of 'high', 'medium', 'low' (high if explicit exact amount given, medium if a range or approximate, low if inferred or unclear)\n"
+        "- budget_source: one of 'text', 'structured' (text if budget was extracted from free text, structured if it came from a form field)\n"
+        "- title: a short title summarizing the request\n\n"
+        "For budget ranges like '50k-100k', set budget_min=50000, budget_max=100000. "
+        "For 'around 40k', set budget_min=36000, budget_max=44000 (+/-10%). "
+        "Set budget_amount to the midpoint. "
+        "If quantity is not explicit, infer it. For campaigns/projects/services, default to 1. "
+        "Always set quantity_inferred and quantity_confidence.\n\n"
+        "Return ALL mentioned delivery countries in the delivery_countries list, not just one.\n"
+    )
 
 
 def _classify_query(text: str) -> tuple[bool, str | None]:
@@ -112,18 +152,24 @@ def _classify_query(text: str) -> tuple[bool, str | None]:
 def _normalize_shorthand(text: str) -> str:
     """Normalize shorthand notations in the request text.
 
-    - 50k / 50K → 50000
-    - 2M / 2m → 2000000
+    Instead of silently expanding numbers (which confuses the LLM when
+    '500 units' and '500k budget' coexist), we annotate expansions so the
+    LLM sees the original AND the expanded form.
+
+    - 50k / 50K → 50k (=50,000)
+    - 2M / 2m → 2M (=2,000,000)
     - SQM → square meters, pcs → pieces, qty → quantity
     """
-    def _expand_k(m: re.Match) -> str:
-        return str(int(m.group(1)) * 1000)
+    def _annotate_k(m: re.Match) -> str:
+        num = int(m.group(1))
+        return f"{num},000 [BUDGET:{num}k]"
 
-    def _expand_m(m: re.Match) -> str:
-        return str(int(m.group(1)) * 1000000)
+    def _annotate_m(m: re.Match) -> str:
+        num = int(m.group(1))
+        return f"{num},000,000 [BUDGET:{num}M]"
 
-    text = re.sub(r"(\d+)\s*[Kk]\b", _expand_k, text)
-    text = re.sub(r"(\d+)\s*[Mm]\b", _expand_m, text)
+    text = re.sub(r"(\d+)\s*[Kk]\b", _annotate_k, text)
+    text = re.sub(r"(\d+)\s*[Mm]\b", _annotate_m, text)
 
     # Common abbreviations (case-insensitive, word boundaries)
     text = re.sub(r"\bSQM\b", "square meters", text, flags=re.IGNORECASE)
@@ -135,7 +181,7 @@ def _normalize_shorthand(text: str) -> str:
 
 def _build_system_prompt(valid_categories: list[tuple[str, str]] | None = None) -> str:
     """Build system prompt, optionally injecting valid category pairs."""
-    prompt = _BASE_SYSTEM_PROMPT
+    prompt = _get_base_system_prompt()
     if valid_categories:
         cat_list = "\n".join(f"  - {l1} / {l2}" for l1, l2 in valid_categories)
         prompt += (
@@ -250,6 +296,15 @@ def extract_requirements(
     if optional_fields is None:
         optional_fields = {}
 
+    # Check extraction cache
+    cache_key = hash(request_text)
+    if cache_key in _extraction_cache:
+        cached = _extraction_cache[cache_key].copy()
+        for key, value in optional_fields.items():
+            if value is not None:
+                cached[key] = value
+        return cached
+
     # Normalize shorthand before sending to Claude
     normalized_text = _normalize_shorthand(request_text)
 
@@ -266,7 +321,7 @@ def extract_requirements(
 
     try:
         response = client.messages.create(
-            model=AGENT_MODEL,
+            model=EXTRACTOR_MODEL,
             max_tokens=AGENT_MAX_TOKENS,
             system=system_prompt,
             messages=[{"role": "user", "content": user_prompt}],
@@ -298,11 +353,68 @@ def extract_requirements(
         logger.exception("Claude extraction failed, returning minimal result")
         extracted = {}
 
+    # POST-EXTRACTION SANITY: fix budget/quantity confusion
+    budget_amt = extracted.get("budget_amount")
+    budget_min = extracted.get("budget_min")
+    budget_max = extracted.get("budget_max")
+    qty = extracted.get("quantity")
+
+    # Pattern 1: budget_min equals quantity and budget_max >> budget_min (fake range)
+    if (budget_min is not None and budget_max is not None and qty is not None
+            and budget_min == qty and budget_max != budget_min
+            and budget_max / max(budget_min, 1) > 10):
+        logger.info("Budget/quantity confusion fix: budget_min=%s==qty, budget_max=%s. Using budget_max.", budget_min, budget_max)
+        extracted["budget_amount"] = budget_max
+        extracted["budget_min"] = None
+        extracted["budget_max"] = None
+        extracted["budget_confidence"] = "high"
+        budget_amt = budget_max
+
+    # Pattern 2: budget_amount equals quantity (small number) but budget_max is large
+    if (budget_amt is not None and qty is not None
+            and budget_amt == qty and budget_amt < 10000
+            and budget_max and budget_max > budget_amt * 10):
+        extracted["budget_amount"] = budget_max
+        extracted["budget_min"] = None
+        extracted["budget_max"] = None
+        budget_amt = budget_max
+
+    # Pattern 3: budget range spans from quantity to a much larger number
+    # e.g., quantity=500, budget_min=500, budget_max=500000 — the 500 is quantity not budget
+    if (budget_min is not None and budget_max is not None
+            and budget_min < 10000 and budget_max > 100000
+            and budget_max / max(budget_min, 1) > 50):
+        logger.info("Budget range too wide (%s to %s), likely quantity confusion. Using budget_max.", budget_min, budget_max)
+        extracted["budget_amount"] = budget_max
+        extracted["budget_min"] = None
+        extracted["budget_max"] = None
+        budget_amt = budget_max
+
+    # Pattern 4: quantity got inflated to match budget (e.g., qty=500000 when user said "500 items, 500k budget")
+    if (qty is not None and budget_amt is not None
+            and qty == budget_amt and qty > 10000):
+        # Check original text for a smaller quantity
+        import re as _re
+        qty_match = _re.search(r"(\d{1,4})\s+(?:units?|items?|pieces?|pcs|windows?|panels?|laptops?|chairs?|desks?|devices?)", request_text, _re.IGNORECASE)
+        if qty_match:
+            real_qty = int(qty_match.group(1))
+            logger.info("Quantity inflated to %s, found %s in text. Fixing.", qty, real_qty)
+            extracted["quantity"] = real_qty
+            extracted["quantity_inferred"] = False
+            extracted["quantity_confidence"] = "high"
+
     # Handle quantity inference
+    qty_dims = extracted.get("quantity_dimensions", [])
     if extracted.get("quantity") is None:
-        extracted["quantity"] = 1
-        extracted["quantity_inferred"] = True
-        extracted["quantity_confidence"] = "low"
+        if qty_dims:
+            # Use the first/primary dimension
+            extracted["quantity"] = qty_dims[0].get("quantity", 1)
+            extracted["unit_of_measure"] = qty_dims[0].get("unit", "units")
+            extracted["quantity_inferred"] = False
+        else:
+            extracted["quantity"] = 1
+            extracted["quantity_inferred"] = True
+            extracted["quantity_confidence"] = "low"
 
     # Handle budget midpoint
     budget_min = extracted.get("budget_min")
@@ -328,9 +440,12 @@ def extract_requirements(
         "budget_amount": extracted.get("budget_amount"),
         "budget_min": extracted.get("budget_min"),
         "budget_max": extracted.get("budget_max"),
+        "budget_confidence": extracted.get("budget_confidence", "medium"),
+        "budget_source": extracted.get("budget_source", "text"),
         "quantity": extracted.get("quantity"),
         "quantity_inferred": extracted.get("quantity_inferred", False),
         "quantity_confidence": extracted.get("quantity_confidence", "high"),
+        "quantity_dimensions": extracted.get("quantity_dimensions", []),
         "unit_of_measure": extracted.get("unit_of_measure"),
         "required_by_date": extracted.get("required_by_date"),
         "preferred_supplier_mentioned": extracted.get("preferred_supplier"),
@@ -360,5 +475,14 @@ def extract_requirements(
     # If country is set but delivery_countries is empty, default delivery to country
     if result.get("country") and not result.get("delivery_countries"):
         result["delivery_countries"] = [result["country"]]
+
+    # Store in cache
+    _extraction_cache[cache_key] = result.copy()
+    # Limit cache size
+    from backend.config import EXTRACTOR_CACHE_SIZE
+    if len(_extraction_cache) > EXTRACTOR_CACHE_SIZE:
+        # Remove oldest entry
+        oldest_key = next(iter(_extraction_cache))
+        del _extraction_cache[oldest_key]
 
     return result

@@ -42,7 +42,7 @@ class CriticAgent(BaseAgent):
     """Reviews specialist outputs for contradictions, weak evidence, and bias."""
 
     def __init__(self):
-        super().__init__("critic", max_tokens=GOVERNANCE_MAX_TOKENS)
+        super().__init__("critic", max_tokens=GOVERNANCE_MAX_TOKENS, use_fast_model=True)
 
     async def analyze(self, context: dict) -> dict:
         try:

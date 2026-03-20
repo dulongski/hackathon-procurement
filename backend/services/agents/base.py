@@ -12,7 +12,9 @@ from httpx import Timeout
 from backend.config import (
     ANTHROPIC_API_KEY,
     AGENT_MODEL,
+    SPECIALIST_MODEL,
     AGENT_MAX_TOKENS,
+    SPECIALIST_MAX_TOKENS,
     AGENT_TIMEOUT,
 )
 
@@ -22,14 +24,15 @@ logger = logging.getLogger(__name__)
 class BaseAgent:
     """Base class that all procurement analysis agents inherit from."""
 
-    def __init__(self, name: str, max_tokens: int | None = None):
+    def __init__(self, name: str, max_tokens: int | None = None, use_fast_model: bool = False):
         self.name = name
         api_key = ANTHROPIC_API_KEY or "missing"
         self.client = anthropic.Anthropic(
             api_key=api_key,
             timeout=Timeout(AGENT_TIMEOUT, connect=10.0),
         )
-        self.model = AGENT_MODEL
+        # Specialist agents use the fast model (Haiku) for speed
+        self.model = SPECIALIST_MODEL if use_fast_model else AGENT_MODEL
         self.max_tokens = max_tokens or AGENT_MAX_TOKENS
 
     async def analyze(self, context: dict) -> dict:
@@ -73,10 +76,32 @@ class BaseAgent:
         return response.content[0].text
 
     def _parse_json_response(self, text: str) -> dict:
-        """Extract JSON from Claude response, handling markdown code blocks."""
-        # Try to find JSON in code blocks first
+        """Extract JSON from Claude response, handling markdown code blocks and truncation."""
+        # Try code blocks first
         match = re.search(r"```(?:json)?\s*\n?(.*?)\n?```", text, re.DOTALL)
         if match:
-            return json.loads(match.group(1))
+            try:
+                return json.loads(match.group(1))
+            except json.JSONDecodeError:
+                pass
         # Try parsing the whole text
-        return json.loads(text)
+        try:
+            return json.loads(text)
+        except json.JSONDecodeError:
+            pass
+        # Try to find any JSON object in the text
+        match = re.search(r"\{[\s\S]*\}", text)
+        if match:
+            # Try progressively shorter substrings to handle truncation
+            raw = match.group(0)
+            try:
+                return json.loads(raw)
+            except json.JSONDecodeError:
+                # Try fixing truncated JSON by closing brackets
+                for suffix in ["}", "]}", "\"]}",  "\"]}", "\"]}}"]:
+                    try:
+                        return json.loads(raw + suffix)
+                    except json.JSONDecodeError:
+                        continue
+        logger.warning("Agent %s: Could not parse JSON from response: %s...", self.name, text[:200])
+        raise json.JSONDecodeError("No valid JSON found", text, 0)

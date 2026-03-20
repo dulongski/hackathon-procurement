@@ -46,6 +46,10 @@ class ProcurementData:
     supplier_category_index: dict[tuple[str, str], list[dict[str, Any]]] = field(
         default_factory=dict
     )
+    # (category_l1, category_l2) -> list of historical award rows
+    historical_awards_by_category: dict[tuple[str, str], list[dict[str, Any]]] = field(
+        default_factory=dict
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -125,6 +129,9 @@ def _load() -> ProcurementData:
     for row in data.historical_awards:
         rid = row["request_id"]
         data.historical_awards_by_request.setdefault(rid, []).append(row)
+    for row in data.historical_awards:
+        cat_key = (row.get("category_l1", ""), row.get("category_l2", ""))
+        data.historical_awards_by_category.setdefault(cat_key, []).append(row)
 
     # --- categories.csv ---
     raw_categories = _read_csv(DATA_FILES["categories"])

@@ -24,7 +24,7 @@ class StrategicAgent(BaseAgent):
     """Evaluates ESG alignment, preferred status, incumbent relationships, and strategic fit."""
 
     def __init__(self):
-        super().__init__("strategic_fit", max_tokens=SPECIALIST_MAX_TOKENS)
+        super().__init__("strategic_fit", max_tokens=SPECIALIST_MAX_TOKENS, use_fast_model=True)
 
     async def analyze(self, context: dict) -> dict:
         """
@@ -77,6 +77,7 @@ class StrategicAgent(BaseAgent):
             )
 
             prompt = (
+                "IMPORTANT: " + request.get("_agent_guardrail", "") + "\n\n"
                 "Evaluate the strategic fit of each supplier for this procurement "
                 "request, considering ESG performance, preferred status, incumbent "
                 "relationships, and category strategy.\n\n"

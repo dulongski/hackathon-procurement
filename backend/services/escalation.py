@@ -59,6 +59,8 @@ def check_escalations(request, validation_issues, policy_eval, eligible_supplier
         missing_fields.append("budget")
     if quantity is None or quantity == 0:
         missing_fields.append("quantity")
+    if not request.get("category_l1"):
+        missing_fields.append("category")
 
     if missing_fields:
         esc_counter += 1

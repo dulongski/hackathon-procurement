@@ -415,6 +415,20 @@ class MemoryEntry(BaseModel):
     relevance_score: float = 1.0
 
 
+class WhitespaceEntry(BaseModel):
+    """Tracks unmatched procurement categories (whitespace demand)."""
+    entry_id: str
+    inferred_category_label: str
+    request_ids: list[str] = Field(default_factory=list)
+    frequency_count: int = 1
+    countries: list[str] = Field(default_factory=list)
+    estimated_budget_range: Optional[str] = None
+    first_seen: str
+    last_seen: str
+    research_status: str = "pending"  # pending, in_progress, completed
+    discovered_suppliers: list[dict[str, Any]] = Field(default_factory=list)
+
+
 # ---------------------------------------------------------------------------
 # Process Trace
 # ---------------------------------------------------------------------------

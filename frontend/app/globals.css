@@ -9,7 +9,8 @@
 }
 
 body {
-  @apply bg-gray-50 text-gray-900 antialiased;
+  @apply bg-ciq-white text-ciq-black antialiased;
+  font-family: "Visby CF", "Inter", system-ui, sans-serif;
 }
 
 /* Custom scrollbar */
@@ -79,4 +80,42 @@ body {
 
 .animate-spin {
   animation: spin 1s linear infinite;
+}
+
+/* Timeline animations */
+@keyframes timeline-fade-in {
+  from {
+    opacity: 0;
+    transform: translateX(-12px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+.animate-timeline-in {
+  animation: timeline-fade-in 0.4s ease-out forwards;
+}
+
+@keyframes pulse-glow {
+  0%, 100% {
+    box-shadow: 0 0 0 0 rgba(99, 102, 241, 0.4);
+  }
+  50% {
+    box-shadow: 0 0 0 6px rgba(99, 102, 241, 0);
+  }
+}
+
+.animate-pulse-glow {
+  animation: pulse-glow 2s ease-in-out infinite;
+}
+
+/* Hide scrollbar but keep scrollable */
+.hide-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+.hide-scrollbar::-webkit-scrollbar {
+  display: none;
 }

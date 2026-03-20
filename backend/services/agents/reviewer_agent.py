@@ -37,7 +37,7 @@ class ReviewerAgent(BaseAgent):
     """Verifies consistency, evidence quality, and audit-readiness of final output."""
 
     def __init__(self):
-        super().__init__("reviewer", max_tokens=GOVERNANCE_MAX_TOKENS)
+        super().__init__("reviewer", max_tokens=GOVERNANCE_MAX_TOKENS, use_fast_model=True)
 
     async def analyze(self, context: dict) -> dict:
         try:

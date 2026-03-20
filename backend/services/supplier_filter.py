@@ -13,6 +13,9 @@ COUNTRY_TO_PRICING_REGION = {
     "UAE": "MEA", "ZA": "MEA",
 }
 
+# Pricing lookup cache
+_pricing_cache: dict[tuple, dict | None] = {}
+
 
 def _is_restricted(supplier_id, category_l1, category_l2, delivery_countries,
                    contract_value, policies):
@@ -210,6 +213,10 @@ def get_pricing_for_supplier(supplier_id, category_l1, category_l2, country,
               standard_lead_time_days, expedited_lead_time_days, tier_min, tier_max,
               region, currency
     """
+    cache_key = (supplier_id, category_l1, category_l2, country, quantity)
+    if cache_key in _pricing_cache:
+        return _pricing_cache[cache_key]
+
     # Determine pricing region from country
     region = COUNTRY_TO_PRICING_REGION.get(country)
 
@@ -223,6 +230,7 @@ def get_pricing_for_supplier(supplier_id, category_l1, category_l2, country,
                 matching_rows.append(row)
 
     if not matching_rows:
+        _pricing_cache[cache_key] = None
         return None
 
     # Find the tier matching the quantity
@@ -252,6 +260,7 @@ def get_pricing_for_supplier(supplier_id, category_l1, category_l2, country,
         best_row = highest
 
     if best_row is None:
+        _pricing_cache[cache_key] = None
         return None
 
     try:
@@ -263,12 +272,13 @@ def get_pricing_for_supplier(supplier_id, category_l1, category_l2, country,
         max_q = int(float(best_row.get("max_quantity", 0)))
         moq = best_row.get("moq")
     except (ValueError, TypeError):
+        _pricing_cache[cache_key] = None
         return None
 
     total = unit_price * quantity
     expedited_total = expedited_price * quantity
 
-    return {
+    result = {
         "pricing_id": best_row.get("pricing_id"),
         "supplier_id": supplier_id,
         "region": best_row.get("region"),
@@ -284,6 +294,8 @@ def get_pricing_for_supplier(supplier_id, category_l1, category_l2, country,
         "moq": moq,
         "pricing_model": best_row.get("pricing_model"),
     }
+    _pricing_cache[cache_key] = result
+    return result
 
 
 def _safe_int(val):
